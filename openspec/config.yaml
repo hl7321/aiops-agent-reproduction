@@ -1,32 +1,33 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  项目：智能 OnCall Agent，采用 npm workspaces 的 monorepo 和 OpenSpec spec-driven 工作流。
+  后端：Python >=3.10、FastAPI、Pydantic v2、uv、hatchling、src layout、SQLAlchemy 2 async、aiosqlite、Alembic、pytest、pytest-asyncio、Ruff、strict Pyright。
+  pytest 使用 asyncio_mode=auto；Ruff line-length=100、target-version=py310，规则 B/E/F/I/UP。
+  后端包固定为 apps/backend/src/super_ai，只允许 from super_ai...，禁止 from src.super_ai...；模块 import 期间不得连接 SQLite、Milvus、LLM 或 MCP。
+  Agent/AI 技术边界：LangChain 1.x create_agent、LangGraph、langchain-openai、langchain-mcp-adapters、MCP、pymilvus 3、rank-bm25、pypdf、langchain-text-splitters、httpx；由后续提案实现。
+  前端：Vue 3.5、Vite 6、TypeScript 5.6 strict（exactOptionalPropertyTypes、noUncheckedIndexedAccess、isolatedModules、ES2022/Bundler resolution）、Pinia 3、Vue Router 4、Vitest 2、marked、DOMPurify、lucide-vue-next；以桌面 Web 为验收目标。
+  仓库目录：apps/backend、apps/frontend、packages/api-contracts、config、infra、scripts、openspec、docs。
+  配置只读取 project.json 与 user.project.json 的递归深合并结果，不读取 OS 环境变量作为项目配置；浏览器只接收明确公开的 allowlist 字段。
+  Compose 最终只托管 etcd、MinIO、Milvus、Attu、Alertmanager；后端、前端和官方 CLS MCP Server 在主机运行。
+  使用 VitePress 文档与 Conventional Commits。README 只能描述已经实现的能力。
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - 使用简体中文，明确目标与非目标，不声称未实现的产品能力
+  design:
+    - 使用简体中文，记录技术栈、依赖注入、配置公开边界和备选方案
+  specs:
+    - 使用简体中文，要求和场景必须可测试
+  tasks:
+    - 使用简体中文和可跟踪的 checkbox，任务按依赖顺序排列
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+operations:
+  apply:
+    guidance:
+      - 先写能因缺少行为而失败的测试，再实现最小行为
+      - 每完成一项任务立即更新 tasks.md
+  archive:
+    guidance:
+      - 归档前必须使用 openspec-verify-change 检查完整性、正确性和设计一致性，并修复所有 CRITICAL 问题
+      - openspec-verify-change 不替代工程门禁；全部门禁通过并同步 delta specs 后才能归档

@@ -1,0 +1,44 @@
+# macOS 与 IDE
+.DS_Store
+.idea/
+.vscode/
+
+# 本机配置与环境文件
+config/project.json
+config/user.project.json
+.env*
+
+# Python 环境与缓存
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+.mypy_cache/
+.pyright/
+.uv-cache/
+
+# Node.js 依赖、构建与覆盖率
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# VitePress 缓存和产物
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
+# 运行期数据、数据库和日志
+apps/backend/var/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/

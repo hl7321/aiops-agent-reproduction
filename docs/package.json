@@ -1,0 +1,13 @@
+{
+  "name": "@super-ai/docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev .",
+    "build": "vitepress build ."
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}

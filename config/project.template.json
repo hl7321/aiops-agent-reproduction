@@ -1,0 +1,24 @@
+{
+  "frontend": {
+    "title": "智能 OnCall Agent",
+    "apiBaseUrl": "http://127.0.0.1:8000"
+  },
+  "analytics": {
+    "publicKey": ""
+  },
+  "llm": {
+    "apiKey": ""
+  },
+  "cls": {
+    "secretId": "",
+    "secretKey": ""
+  },
+  "mcp": {
+    "apiKey": ""
+  },
+  "minio": {
+    "accessKey": "",
+    "secretKey": "",
+    "password": ""
+  }
+}

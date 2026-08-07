@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "errors": {
+    "AUTH_REQUIRED": {
+      "code": "AUTH_REQUIRED",
+      "category": "authentication",
+      "httpStatus": 401,
+      "defaultMessage": "需要认证后才能访问"
+    },
+    "AUTH_FORBIDDEN": {
+      "code": "AUTH_FORBIDDEN",
+      "category": "authorization",
+      "httpStatus": 403,
+      "defaultMessage": "没有权限执行该操作"
+    },
+    "BUSINESS_RULE_VIOLATION": {
+      "code": "BUSINESS_RULE_VIOLATION",
+      "category": "business",
+      "httpStatus": 409,
+      "defaultMessage": "请求与当前业务规则冲突"
+    },
+    "VALIDATION_REQUEST_INVALID": {
+      "code": "VALIDATION_REQUEST_INVALID",
+      "category": "validation",
+      "httpStatus": 422,
+      "defaultMessage": "请求参数验证失败"
+    },
+    "SYSTEM_ROUTE_NOT_FOUND": {
+      "code": "SYSTEM_ROUTE_NOT_FOUND",
+      "category": "system",
+      "httpStatus": 404,
+      "defaultMessage": "请求的资源不存在"
+    },
+    "SYSTEM_METHOD_NOT_ALLOWED": {
+      "code": "SYSTEM_METHOD_NOT_ALLOWED",
+      "category": "system",
+      "httpStatus": 405,
+      "defaultMessage": "请求方法不受支持"
+    },
+    "SYSTEM_INTERNAL_ERROR": {
+      "code": "SYSTEM_INTERNAL_ERROR",
+      "category": "system",
+      "httpStatus": 500,
+      "defaultMessage": "服务暂时不可用"
+    }
+  },
+  "openapi": {
+    "paths": {
+      "/health": {
+        "method": "GET",
+        "operationId": "getHealth",
+        "successData": "FoundationStatus"
+      }
+    }
+  },
+  "sse": {
+    "eventTypes": [
+      "content.delta",
+      "reasoning.delta",
+      "tool.call",
+      "reference.source",
+      "task.status",
+      "report",
+      "complete",
+      "error"
+    ],
+    "toolCallLifecycles": ["started", "delta", "completed", "failed"]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "super-ai-oncall",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "apps/frontend",
+    "packages/api-contracts",
+    "docs"
+  ],
+  "scripts": {
+    "contracts:typecheck": "npm run typecheck --workspace @super-ai/api-contracts",
+    "contracts:test": "npm run test --workspace @super-ai/api-contracts",
+    "frontend:dev": "npm run dev --workspace @super-ai/frontend",
+    "frontend:typecheck": "npm run typecheck --workspace @super-ai/frontend",
+    "frontend:test": "npm run test --workspace @super-ai/frontend",
+    "frontend:build": "npm run build --workspace @super-ai/frontend",
+    "frontend:test:secret": "npm run test:secret --workspace @super-ai/frontend",
+    "docs:dev": "npm run dev --workspace @super-ai/docs",
+    "docs:build": "npm run build --workspace @super-ai/docs"
+  }
+}
