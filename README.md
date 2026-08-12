@@ -1,6 +1,6 @@
 # 智能 OnCall Agent
 
-本仓库当前提供安全 monorepo 工程基础：最小后端健康检查、桌面 Web 前端骨架、共享类型、项目配置边界和质量门禁。认证、聊天、知识库、AIOps、Agent、LLM、Milvus 与 MCP 产品能力尚未实现。
+本仓库当前提供安全 monorepo 工程基础、SQLite Repository、本地用户认证、tenant 隔离、Qwen provider、只含五个依赖服务的本地 Compose，以及显式连接的 tenant-safe Milvus adapter 基础。完整认证页面、聊天、知识库、AIOps、Agent、RAG 与 MCP 产品能力尚未实现；真实百炼与 Milvus 凭据 smoke 均不属于默认自动化门禁。
 
 ## 安装
 
@@ -16,6 +16,7 @@ uv sync
 
 ```bash
 openspec validate --all
+docker compose -f infra/compose.yaml config
 cd apps/backend && uv run ruff check . && uv run pyright && uv run pytest
 cd ../.. && npm run contracts:typecheck && npm run contracts:test
 npm run frontend:typecheck && npm run frontend:test && npm run frontend:build

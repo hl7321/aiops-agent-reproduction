@@ -9,6 +9,7 @@ import type { TransportOptions } from "./transportOptions";
 
 export interface ApiClientOptions extends TransportOptions {
   baseUrl?: string;
+  onUnauthorized?: (error: ApiClientError) => void | Promise<void>;
 }
 
 export interface ApiResult<T> {
@@ -46,7 +47,11 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         throw new TypeError("响应不符合共享 API envelope");
       }
       if (!payload.ok) {
-        throw new ApiClientError(payload.error, payload.meta.requestId);
+        const error = new ApiClientError(payload.error, payload.meta.requestId);
+        if (payload.error.httpStatus === 401) {
+          await options.onUnauthorized?.(error);
+        }
+        throw error;
       }
       return { data: payload.data, requestId: payload.meta.requestId };
     },

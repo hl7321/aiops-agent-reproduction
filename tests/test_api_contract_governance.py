@@ -65,6 +65,30 @@ def test_scanner_rejects_temporary_backend_envelope(tmp_path: Path) -> None:
     assert "临时 HTTP envelope" in result.stdout
 
 
+def test_scanner_rejects_private_frontend_auth_payload(tmp_path: Path) -> None:
+    private_auth = tmp_path / "apps/frontend/src/private-auth.ts"
+    private_auth.parent.mkdir(parents=True)
+    private_auth.write_text(
+        "export interface AuthUser { id: string; email: string; createdAt: string; }\n",
+        encoding="utf-8",
+    )
+
+    result = run_scanner(tmp_path)
+
+    assert result.returncode == 1
+    assert "private-auth.ts" in result.stdout
+    assert "私有 Auth payload" in result.stdout
+
+
+def test_auth_store_persists_only_shared_token_key() -> None:
+    source = (ROOT / "apps/frontend/src/stores/auth.ts").read_text(encoding="utf-8")
+
+    assert source.count("storage.setItem(") == 1
+    assert "storage.setItem(AUTH_TOKEN_STORAGE_KEY, result.data.token)" in source
+    assert "storage.setItem(\"password\"" not in source
+    assert "storage.setItem(\"user\"" not in source
+
+
 def test_current_repository_obeys_contract_boundaries() -> None:
     result = run_scanner(ROOT)
 

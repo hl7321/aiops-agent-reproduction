@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { FoundationStatus } from "@super-ai/api-contracts";
 
@@ -20,7 +20,9 @@ describe("apiClient", () => {
   });
 
   it("把失败 envelope 转换为携带共享 error 的 typed 异常", async () => {
+    const onUnauthorized = vi.fn();
     const client = createApiClient({
+      onUnauthorized,
       fetcher: async () => new Response(JSON.stringify({
         ok: false,
         error: {
@@ -44,6 +46,7 @@ describe("apiClient", () => {
         httpStatus: 401,
       },
     });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
   });
 
   it("通过扩展点注入 bearer token 和 request ID", async () => {

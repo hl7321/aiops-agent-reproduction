@@ -13,11 +13,29 @@
       "httpStatus": 403,
       "defaultMessage": "没有权限执行该操作"
     },
+    "AUTH_INVALID_CREDENTIALS": {
+      "code": "AUTH_INVALID_CREDENTIALS",
+      "category": "authentication",
+      "httpStatus": 401,
+      "defaultMessage": "邮箱或密码错误"
+    },
+    "AUTH_EMAIL_ALREADY_REGISTERED": {
+      "code": "AUTH_EMAIL_ALREADY_REGISTERED",
+      "category": "business",
+      "httpStatus": 409,
+      "defaultMessage": "该邮箱已注册"
+    },
     "BUSINESS_RULE_VIOLATION": {
       "code": "BUSINESS_RULE_VIOLATION",
       "category": "business",
       "httpStatus": 409,
       "defaultMessage": "请求与当前业务规则冲突"
+    },
+    "BUSINESS_RESOURCE_NOT_FOUND": {
+      "code": "BUSINESS_RESOURCE_NOT_FOUND",
+      "category": "business",
+      "httpStatus": 404,
+      "defaultMessage": "请求的资源不存在"
     },
     "VALIDATION_REQUEST_INVALID": {
       "code": "VALIDATION_REQUEST_INVALID",
@@ -45,11 +63,45 @@
     }
   },
   "openapi": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "protectedPathPolicy": {
+      "security": "BearerAuth",
+      "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+    },
     "paths": {
       "/health": {
         "method": "GET",
         "operationId": "getHealth",
         "successData": "FoundationStatus"
+      },
+      "/auth/register": {
+        "method": "POST",
+        "operationId": "registerUser",
+        "successData": "AuthUser"
+      },
+      "/auth/login": {
+        "method": "POST",
+        "operationId": "loginUser",
+        "successData": "LoginData"
+      },
+      "/auth/logout": {
+        "method": "POST",
+        "operationId": "logoutUser",
+        "successData": "LogoutData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/auth/me": {
+        "method": "GET",
+        "operationId": "getCurrentUser",
+        "successData": "AuthUser",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
       }
     }
   },

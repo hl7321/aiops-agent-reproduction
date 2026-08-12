@@ -4,15 +4,22 @@ import manifest from "../contract-manifest.json";
 import {
   ERROR_DEFINITIONS,
   OPENAPI_PATHS,
+  OPENAPI_SECURITY_SCHEMES,
+  PROTECTED_PATH_POLICY,
   SSE_EVENT_TYPES,
   TOOL_CALL_LIFECYCLES,
   isApiEnvelope,
 } from "./index";
 import type {
   ApiError,
+  AuthUser,
   ErrorEvent,
   FailureEnvelope,
   FoundationStatus,
+  LoginData,
+  LoginRequest,
+  LogoutData,
+  RegisterRequest,
   SuccessEnvelope,
   ToolCallEvent,
 } from "./index";
@@ -74,7 +81,10 @@ describe("HTTP 合同", () => {
     expect(Object.keys(ERROR_DEFINITIONS)).toEqual([
       "AUTH_REQUIRED",
       "AUTH_FORBIDDEN",
+      "AUTH_INVALID_CREDENTIALS",
+      "AUTH_EMAIL_ALREADY_REGISTERED",
       "BUSINESS_RULE_VIOLATION",
+      "BUSINESS_RESOURCE_NOT_FOUND",
       "VALIDATION_REQUEST_INVALID",
       "SYSTEM_ROUTE_NOT_FOUND",
       "SYSTEM_METHOD_NOT_ALLOWED",
@@ -88,12 +98,91 @@ describe("HTTP 合同", () => {
     });
   });
 
+  it("公开认证错误、Auth DTO 与 bearer OpenAPI 合同", () => {
+    const register: RegisterRequest = { email: "USER@example.com", password: "secret-123" };
+    const login: LoginRequest = register;
+    const user: AuthUser = {
+      id: "user-1",
+      email: "user@example.com",
+      createdAt: "2026-08-08T00:00:00Z",
+    };
+    const loginData: LoginData = { user, token: "raw-token" };
+    const logoutData: LogoutData = { revoked: true };
+
+    expect({ register, login, loginData, logoutData }).toMatchObject({
+      loginData: { user, token: "raw-token" },
+      logoutData: { revoked: true },
+    });
+    expect(ERROR_DEFINITIONS.AUTH_INVALID_CREDENTIALS).toEqual({
+      code: "AUTH_INVALID_CREDENTIALS",
+      category: "authentication",
+      httpStatus: 401,
+      defaultMessage: "邮箱或密码错误",
+    });
+    expect(OPENAPI_SECURITY_SCHEMES).toEqual(manifest.openapi.securitySchemes);
+    expect(OPENAPI_SECURITY_SCHEMES.BearerAuth).toEqual({ type: "http", scheme: "bearer" });
+  });
+
   it("登记 foundation health 的机器可读 OpenAPI path", () => {
     expect(OPENAPI_PATHS).toEqual(manifest.openapi.paths);
     expect(OPENAPI_PATHS["/health"]).toEqual({
       method: "GET",
       operationId: "getHealth",
       successData: "FoundationStatus",
+    });
+  });
+
+  it("登记四个认证 path 并仅保护 logout 与 me", () => {
+    expect(Object.keys(OPENAPI_PATHS)).toEqual([
+      "/health",
+      "/auth/register",
+      "/auth/login",
+      "/auth/logout",
+      "/auth/me",
+    ]);
+    expect(OPENAPI_PATHS["/auth/register"]).toEqual({
+      method: "POST",
+      operationId: "registerUser",
+      successData: "AuthUser",
+    });
+    expect(OPENAPI_PATHS["/auth/login"]).toEqual({
+      method: "POST",
+      operationId: "loginUser",
+      successData: "LoginData",
+    });
+    expect(OPENAPI_PATHS["/auth/logout"]).toEqual({
+      method: "POST",
+      operationId: "logoutUser",
+      successData: "LogoutData",
+      security: ["BearerAuth"],
+      errors: ["AUTH_REQUIRED", "AUTH_FORBIDDEN"],
+    });
+    expect(OPENAPI_PATHS["/auth/me"]).toEqual({
+      method: "GET",
+      operationId: "getCurrentUser",
+      successData: "AuthUser",
+      security: ["BearerAuth"],
+      errors: ["AUTH_REQUIRED", "AUTH_FORBIDDEN"],
+    });
+  });
+
+  it("所有受保护 path 复用统一 bearer、401 与 403 policy", () => {
+    expect(PROTECTED_PATH_POLICY).toEqual({
+      security: "BearerAuth",
+      errors: ["AUTH_REQUIRED", "AUTH_FORBIDDEN"],
+    });
+    expect(PROTECTED_PATH_POLICY).toEqual(manifest.openapi.protectedPathPolicy);
+
+    for (const [path, definition] of Object.entries(OPENAPI_PATHS)) {
+      if (definition.security?.includes("BearerAuth")) {
+        expect(definition.errors, path).toEqual(PROTECTED_PATH_POLICY.errors);
+      }
+    }
+    expect(ERROR_DEFINITIONS.BUSINESS_RESOURCE_NOT_FOUND).toEqual({
+      code: "BUSINESS_RESOURCE_NOT_FOUND",
+      category: "business",
+      httpStatus: 404,
+      defaultMessage: "请求的资源不存在",
     });
   });
 

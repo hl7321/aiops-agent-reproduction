@@ -29,8 +29,14 @@ describe("public config", () => {
       frontend: { title: "值班台", apiBaseUrl: "/api" },
       analytics: { publicKey: "public-analytics" },
       llm: { apiKey: sentinel },
+      modelCapabilities: { "qwen3.7-max": { internalToken: sentinel } },
+      vectorStore: { token: sentinel },
       cls: { secretKey: sentinel },
       mcp: { apiKey: sentinel },
+      clsMcpServer: { secretKey: sentinel },
+      prometheusAlerts: { password: sentinel },
+      clsLogUpload: { secretId: sentinel },
+      aiopsDemo: { email: sentinel, password: sentinel },
       minio: { password: sentinel },
     });
 

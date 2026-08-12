@@ -1,0 +1,42 @@
+import subprocess
+import sys
+from pathlib import Path
+
+from super_ai.memory.sqlite import Base
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_tenancy_import_has_no_database_network_or_milvus_side_effects(tmp_path: Path) -> None:
+    script = """
+from unittest.mock import patch
+
+with (
+    patch("aiosqlite.connect", side_effect=AssertionError("import connected SQLite")),
+    patch("socket.socket.connect", side_effect=AssertionError("import connected network")),
+):
+    import super_ai.tenancy
+    import super_ai.tenancy.dependencies
+    import super_ai.tenancy.vector_scope
+    import super_ai.memory.sqlite.owner_scope
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_p05_adds_no_product_table_or_migration_revision() -> None:
+    revisions = sorted((ROOT / "migrations/versions").glob("*.py"))
+
+    assert [path.name for path in revisions] == [
+        "20260808_0001_persistence_foundation.py",
+        "20260808_0002_add_user_authentication.py",
+    ]
+    assert set(Base.metadata.tables) == {"users", "auth_sessions"}

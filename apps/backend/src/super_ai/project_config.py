@@ -13,6 +13,10 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 
+class ProjectConfigError(ValueError):
+    """不包含配置内容或凭据的项目配置错误。"""
+
+
 def deep_merge(base: Mapping[str, JsonValue], override: Mapping[str, JsonValue]) -> JsonObject:
     """递归合并对象；数组和标量由 override 整体替换。"""
     merged: JsonObject = deepcopy(dict(base))
@@ -31,10 +35,19 @@ def load_project_config(project_path: Path, user_path: Path) -> JsonObject:
 
 
 def _read_json_object(path: Path) -> JsonObject:
-    raw: object = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        content = path.read_text(encoding="utf-8")
+    except FileNotFoundError as error:
+        raise ProjectConfigError(f"配置文件不存在: {path}") from error
+    except OSError as error:
+        raise ProjectConfigError(f"无法读取配置文件: {path}") from error
+    try:
+        raw: object = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ProjectConfigError(f"配置文件不是有效 JSON: {path}") from error
     value = _normalize_json(raw)
     if not isinstance(value, dict):
-        raise ValueError(f"配置文件顶层必须是 JSON object: {path}")
+        raise ProjectConfigError(f"配置文件顶层必须是 JSON object: {path}")
     return value
 
 

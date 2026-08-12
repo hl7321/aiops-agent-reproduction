@@ -19,10 +19,16 @@ SSE_EVENT_TYPES = frozenset(
         "error",
     }
 )
-TYPESCRIPT_STRING = re.compile(r"(['\"])(?P<value>[^'\"]+)\1")
+TYPESCRIPT_SSE_TYPE = re.compile(
+    r"\btype\s*:\s*(['\"])(?P<value>content\.delta|reasoning\.delta|tool\.call|"
+    r"reference\.source|task\.status|report|complete|error)\1"
+)
 TYPESCRIPT_ENVELOPE = re.compile(
     r"\bok\s*:\s*(?:true|false).+\b(?:data|error)\s*:.+\bmeta\s*:",
     re.DOTALL,
+)
+TYPESCRIPT_PRIVATE_AUTH = re.compile(
+    r"\b(?:interface|type)\s+(?:AuthUser|RegisterRequest|LoginRequest|LoginData|LogoutData)\b"
 )
 
 
@@ -36,11 +42,13 @@ def find_violations(root: Path) -> list[str]:
         if path.name.endswith(".test.ts"):
             continue
         text = path.read_text(encoding="utf-8")
-        values = {match.group("value") for match in TYPESCRIPT_STRING.finditer(text)}
+        values = {match.group("value") for match in TYPESCRIPT_SSE_TYPE.finditer(text)}
         if values & SSE_EVENT_TYPES:
             violations.append(format_violation(root, path, "私有 SSE 事件字面量"))
         if TYPESCRIPT_ENVELOPE.search(text) is not None:
             violations.append(format_violation(root, path, "临时 HTTP envelope"))
+        if TYPESCRIPT_PRIVATE_AUTH.search(text) is not None:
+            violations.append(format_violation(root, path, "私有 Auth payload"))
 
     for path in sorted(backend_root.rglob("*.py")) if backend_root.exists() else ():
         if path.name == "api_contracts.py" or path.name.startswith("test_"):

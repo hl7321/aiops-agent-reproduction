@@ -3,12 +3,15 @@
 from dataclasses import dataclass
 from typing import Annotated, Final, Generic, Literal, TypeAlias, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 ErrorCode: TypeAlias = Literal[
     "AUTH_REQUIRED",
     "AUTH_FORBIDDEN",
+    "AUTH_INVALID_CREDENTIALS",
+    "AUTH_EMAIL_ALREADY_REGISTERED",
     "BUSINESS_RULE_VIOLATION",
+    "BUSINESS_RESOURCE_NOT_FOUND",
     "VALIDATION_REQUEST_INVALID",
     "SYSTEM_ROUTE_NOT_FOUND",
     "SYSTEM_METHOD_NOT_ALLOWED",
@@ -85,11 +88,29 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         http_status=403,
         default_message="没有权限执行该操作",
     ),
+    "AUTH_INVALID_CREDENTIALS": ErrorDefinition(
+        code="AUTH_INVALID_CREDENTIALS",
+        category="authentication",
+        http_status=401,
+        default_message="邮箱或密码错误",
+    ),
+    "AUTH_EMAIL_ALREADY_REGISTERED": ErrorDefinition(
+        code="AUTH_EMAIL_ALREADY_REGISTERED",
+        category="business",
+        http_status=409,
+        default_message="该邮箱已注册",
+    ),
     "BUSINESS_RULE_VIOLATION": ErrorDefinition(
         code="BUSINESS_RULE_VIOLATION",
         category="business",
         http_status=409,
         default_message="请求与当前业务规则冲突",
+    ),
+    "BUSINESS_RESOURCE_NOT_FOUND": ErrorDefinition(
+        code="BUSINESS_RESOURCE_NOT_FOUND",
+        category="business",
+        http_status=404,
+        default_message="请求的资源不存在",
     ),
     "VALIDATION_REQUEST_INVALID": ErrorDefinition(
         code="VALIDATION_REQUEST_INVALID",
@@ -153,6 +174,41 @@ class FailureEnvelope(ContractModel):
 
 class FoundationStatus(ContractModel):
     status: Literal["ok"] = "ok"
+
+
+class AuthUser(ContractModel):
+    id: str
+    email: str
+    created_at: str = Field(alias="createdAt")
+
+
+class RegisterRequest(ContractModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(min_length=8, max_length=1024)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def strip_email(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class LoginRequest(ContractModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def strip_email(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class LoginData(ContractModel):
+    user: AuthUser
+    token: str
+
+
+class LogoutData(ContractModel):
+    revoked: Literal[True] = True
 
 
 class SseEventBase(ContractModel):

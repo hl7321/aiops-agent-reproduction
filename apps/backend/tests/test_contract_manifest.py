@@ -10,9 +10,13 @@ from super_ai.api_contracts import (
     SSE_EVENT_TYPES,
     TOOL_CALL_LIFECYCLES,
     ApiErrorModel,
+    AuthUser,
     ErrorEvent,
+    LoginData,
+    LogoutData,
     SseEvent,
 )
+from super_ai.app import create_app
 
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST_PATH = ROOT / "packages/api-contracts/contract-manifest.json"
@@ -31,6 +35,45 @@ def test_python_catalogs_match_contract_manifest() -> None:
     )
     assert list(SSE_EVENT_TYPES) == sse["eventTypes"]
     assert list(TOOL_CALL_LIFECYCLES) == sse["toolCallLifecycles"]
+
+
+def test_auth_models_and_openapi_manifest_match_contracts() -> None:
+    manifest = load_manifest()
+    openapi = cast(dict[str, object], manifest["openapi"])
+    paths = cast(dict[str, object], openapi["paths"])
+
+    user = AuthUser(id="user-1", email="user@example.com", createdAt="2026-08-08T00:00:00Z")
+    assert LoginData(user=user, token="raw-token").model_dump(by_alias=True) == {
+        "user": {"id": "user-1", "email": "user@example.com", "createdAt": "2026-08-08T00:00:00Z"},
+        "token": "raw-token",
+    }
+    assert LogoutData().model_dump(by_alias=True) == {"revoked": True}
+    assert openapi["securitySchemes"] == {"BearerAuth": {"type": "http", "scheme": "bearer"}}
+    assert set(paths) == {"/health", "/auth/register", "/auth/login", "/auth/logout", "/auth/me"}
+
+
+def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
+    manifest = load_manifest()
+    expected_openapi = cast(dict[str, object], manifest["openapi"])
+    expected_paths = cast(dict[str, dict[str, object]], expected_openapi["paths"])
+    expected_error_definitions = cast(dict[str, dict[str, object]], manifest["errors"])
+    schema = create_app().openapi()
+
+    assert schema["components"]["securitySchemes"] == expected_openapi["securitySchemes"]
+    for path, expected in expected_paths.items():
+        operation = schema["paths"][path][cast(str, expected["method"]).lower()]
+        assert operation["operationId"] == expected["operationId"]
+        expected_security = expected.get("security", [])
+        actual_security = [next(iter(item)) for item in operation.get("security", [])]
+        assert actual_security == expected_security
+        expected_errors = cast(list[str], expected.get("errors", []))
+        actual_errors = sorted(
+            code for code in operation.get("responses", {}) if code in {"401", "403"}
+        )
+        error_statuses = sorted(
+            str(expected_error_definitions[code]["httpStatus"]) for code in expected_errors
+        )
+        assert actual_errors == error_statuses
 
 
 @pytest.mark.parametrize(
