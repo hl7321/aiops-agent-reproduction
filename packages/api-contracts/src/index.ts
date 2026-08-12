@@ -1,6 +1,8 @@
 export * from "./auth";
+export * from "./background-jobs";
 export * from "./errors";
 export * from "./http";
+export * from "./knowledge";
 export * from "./openapi";
 export * from "./sse";
 

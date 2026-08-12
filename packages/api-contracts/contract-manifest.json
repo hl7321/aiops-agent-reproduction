@@ -31,6 +31,12 @@
       "httpStatus": 409,
       "defaultMessage": "请求与当前业务规则冲突"
     },
+    "BUSINESS_CONFLICT": {
+      "code": "BUSINESS_CONFLICT",
+      "category": "business",
+      "httpStatus": 409,
+      "defaultMessage": "相同内容的文档已存在"
+    },
     "BUSINESS_RESOURCE_NOT_FOUND": {
       "code": "BUSINESS_RESOURCE_NOT_FOUND",
       "category": "business",
@@ -102,8 +108,60 @@
         "successData": "AuthUser",
         "security": ["BearerAuth"],
         "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/background-jobs": {
+        "method": "GET",
+        "operationId": "listBackgroundJobs",
+        "successData": "BackgroundJobListData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/background-jobs/{id}": {
+        "method": "GET",
+        "operationId": "getBackgroundJob",
+        "successData": "BackgroundJob",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/background-jobs/{id}:cancel": {
+        "method": "POST",
+        "operationId": "cancelBackgroundJob",
+        "successData": "BackgroundJob",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/background-jobs/{id}:retry": {
+        "method": "POST",
+        "operationId": "retryBackgroundJob",
+        "successData": "BackgroundJob",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_RULE_VIOLATION"]
+      },
+      "/knowledge-bases": {
+        "method": "GET", "operationId": "listKnowledgeBases", "successData": "KnowledgeBaseListData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/knowledge-bases/{kb}/documents": {
+        "method": "GET", "operationId": "listKnowledgeDocuments", "successData": "KnowledgeDocumentListData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/knowledge-bases/{kb}/documents/{document}": {
+        "method": "GET", "operationId": "getKnowledgeDocument", "successData": "KnowledgeDocument",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/knowledge-bases/{kb}/documents/{document}/chunk-preview": {
+        "method": "GET", "operationId": "previewKnowledgeDocumentChunks", "successData": "ChunkPreviewData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
       }
-    }
+    },
+    "knowledgeOperations": [
+      {"path":"/knowledge-bases","method":"GET","operationId":"listKnowledgeBases","successData":"KnowledgeBaseListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/knowledge-bases/{kb}/documents","method":"GET","operationId":"listKnowledgeDocuments","successData":"KnowledgeDocumentListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/knowledge-bases/{kb}/documents","method":"POST","operationId":"uploadKnowledgeDocument","successData":"KnowledgeDocument","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_CONFLICT","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/knowledge-bases/{kb}/documents/{document}","method":"GET","operationId":"getKnowledgeDocument","successData":"KnowledgeDocument","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/knowledge-bases/{kb}/documents/{document}","method":"DELETE","operationId":"deleteKnowledgeDocument","successData":"KnowledgeDocument","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/knowledge-bases/{kb}/documents/{document}/chunk-preview","method":"GET","operationId":"previewKnowledgeDocumentChunks","successData":"ChunkPreviewData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]}
+    ]
   },
   "sse": {
     "eventTypes": [

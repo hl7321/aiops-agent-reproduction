@@ -15,6 +15,12 @@ socket.socket.connect = blocked
 
 import super_ai
 import super_ai.app
+import super_ai.background_jobs
+import super_ai.background_jobs.handlers
+import super_ai.background_jobs.runtime
+import super_ai.knowledge
+import super_ai.knowledge.chunking
+import super_ai.knowledge.files
 import super_ai.project_config
 """
 

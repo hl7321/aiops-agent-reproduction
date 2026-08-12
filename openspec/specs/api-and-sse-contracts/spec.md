@@ -3,9 +3,7 @@
 ## Purpose
 
 本能力为所有后续 HTTP 与 SSE 功能提供跨前后端一致、机器可读、可测试且可安全扩展的共享合同，避免各功能自行定义临时 payload。
-
 ## Requirements
-
 ### Requirement: HTTP 响应使用统一 envelope
 所有成功 HTTP 响应 SHALL 使用 `{ok:true,data,meta:{requestId}}`，所有失败 HTTP 响应 SHALL 使用 `{ok:false,error:{code,category,httpStatus,message,details?},meta:{requestId}}`。`details` MAY 省略，其内容 MUST 可安全返回客户端。
 
@@ -118,3 +116,25 @@
 #### Scenario: 检测不完整受保护 path
 - **WHEN** 机器可读目录中的 path 使用 bearer 但缺少共享 401 或 403
 - **THEN** 合同测试失败并指出该 path
+
+### Requirement: 共享合同登记后台任务管理边界
+共享合同 SHALL 定义 BackgroundJob、BackgroundJobEvent、任务状态与取消/重试响应类型，并在机器可读 OpenAPI 目录登记 `GET /background-jobs`、`GET /background-jobs/{id}`、`POST /background-jobs/{id}:cancel` 和 `POST /background-jobs/{id}:retry`。四个 path MUST 使用 `BearerAuth` 并复用 `AUTH_REQUIRED`、`AUTH_FORBIDDEN` 与 `BUSINESS_RESOURCE_NOT_FOUND`。
+
+#### Scenario: 合同消费者读取后台任务 path
+- **WHEN** 前端或合同测试遍历共享 path 目录
+- **THEN** 四个后台任务 path 具有稳定 method、operationId、成功数据类型、安全方案和错误列表
+
+#### Scenario: 前后端序列化任务
+- **WHEN** 后端返回任务详情或事件
+- **THEN** Pydantic JSON 形状与 TypeScript 共享 DTO 一致且不包含 heartbeatAt 或 result
+
+### Requirement: 共享合同登记知识文档上传与管理边界
+共享合同 SHALL 定义 KnowledgeBase、KnowledgeDocument、ChunkingConfig、ChunkPreview DTO，以及 10 MiB、`.md/.pdf`、MIME、multipart 字段等上传 policy 常量。机器可读 OpenAPI 目录 MUST 登记知识库列表、文档列表/上传/详情/删除/预览六种操作；受保护 path MUST 使用 `BearerAuth` 并复用 401/403/404，上传额外登记 validation 与 `BUSINESS_CONFLICT` 409。
+
+#### Scenario: 合同消费者读取上传 policy
+- **WHEN** 前端或测试读取共享 policy
+- **THEN** 获得精确最大字节数、扩展名/MIME 映射、multipart file/config/overwrite 字段和三种策略名
+
+#### Scenario: 合同消费者读取知识 path
+- **WHEN** 遍历机器可读 path 目录
+- **THEN** 六种操作具有稳定 method、operationId、成功 DTO、安全方案与错误列表

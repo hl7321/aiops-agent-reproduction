@@ -21,6 +21,8 @@ if configuration.config_file_name is not None:
     fileConfig(configuration.config_file_name)
 
 importlib.import_module("super_ai.memory.extended_sqlite.auth_models")
+importlib.import_module("super_ai.memory.extended_sqlite.background_job_models")
+importlib.import_module("super_ai.memory.extended_sqlite.knowledge_models")
 target_metadata = Base.metadata
 
 

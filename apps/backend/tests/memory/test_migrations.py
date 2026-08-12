@@ -13,7 +13,7 @@ from super_ai.memory.config import DatabaseSettings
 from super_ai.memory.sqlite import Base, create_sqlite_engine
 from super_ai.memory.sqlite.migrations import upgrade_database
 
-BASELINE_REVISION = "20260808_0002"
+BASELINE_REVISION = "20260812_0004"
 
 
 def _sqlite_url(path: Path) -> str:

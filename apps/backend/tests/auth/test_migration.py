@@ -15,7 +15,7 @@ def _schema(connection: Connection) -> dict[str, set[str]]:
 
 
 async def test_auth_migration_creates_normalized_schema(auth_database_url: str) -> None:
-    await upgrade_database(auth_database_url)
+    await upgrade_database(auth_database_url, revision="20260808_0002")
     engine = create_sqlite_engine(DatabaseSettings(url=auth_database_url))
     try:
         async with engine.connect() as connection:
@@ -28,7 +28,12 @@ async def test_auth_migration_creates_normalized_schema(auth_database_url: str) 
     assert schema == {
         "users": {"id", "email", "password_hash", "created_at", "updated_at"},
         "auth_sessions": {
-            "id", "user_id", "token_hash", "created_at", "last_seen_at", "revoked_at"
+            "id",
+            "user_id",
+            "token_hash",
+            "created_at",
+            "last_seen_at",
+            "revoked_at",
         },
     }
     assert UserModel.__table__ is Base.metadata.tables["users"]

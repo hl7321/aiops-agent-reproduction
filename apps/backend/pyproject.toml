@@ -22,6 +22,7 @@ dependencies = [
   "pwdlib[argon2]>=0.2,<1",
   "pydantic>=2.10,<3",
   "pymilvus>=3,<4",
+  "python-multipart>=0.0.20,<1",
   "pypdf>=5,<7",
   "rank-bm25>=0.2.2,<1",
   "sqlalchemy[asyncio]>=2,<3",

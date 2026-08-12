@@ -11,8 +11,12 @@ from super_ai.api_contracts import ErrorCode, FoundationStatus, SuccessEnvelope
 from super_ai.api_responses import AppError, error_response, success_response
 from super_ai.auth.router import router as auth_router
 from super_ai.auth.service import AuthServiceError
+from super_ai.background_jobs.handlers import HandlerRegistry
+from super_ai.background_jobs.lifespan import create_application_lifespan
+from super_ai.background_jobs.router import router as background_jobs_router
+from super_ai.background_jobs.runtime import WorkerSettings
+from super_ai.knowledge.router import router as knowledge_router
 from super_ai.memory.config import DatabaseSettings
-from super_ai.memory.sqlite import create_persistence_lifespan
 from super_ai.request_id import get_request_id, request_id_middleware
 
 
@@ -82,10 +86,17 @@ async def http_error_handler(request: Request, error: Exception) -> JSONResponse
     return error_response(code, get_request_id(request))
 
 
-def create_app(database_settings: DatabaseSettings | None = None) -> FastAPI:
+def create_app(
+    database_settings: DatabaseSettings | None = None,
+    *,
+    background_job_registry: HandlerRegistry | None = None,
+    worker_settings: WorkerSettings | None = None,
+) -> FastAPI:
     """创建无外部连接副作用的最小 FastAPI 应用。"""
     lifespan = (
-        create_persistence_lifespan(database_settings) if database_settings is not None else None
+        create_application_lifespan(database_settings, background_job_registry, worker_settings)
+        if database_settings is not None
+        else None
     )
     app = FastAPI(title="智能 OnCall Agent", lifespan=lifespan)
     app.middleware("http")(request_id_middleware)
@@ -108,4 +119,6 @@ def create_app(database_settings: DatabaseSettings | None = None) -> FastAPI:
         response_model=SuccessEnvelope[FoundationStatus],
     )
     app.include_router(auth_router)
+    app.include_router(background_jobs_router)
+    app.include_router(knowledge_router)
     return app

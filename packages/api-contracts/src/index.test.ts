@@ -9,6 +9,8 @@ import {
   SSE_EVENT_TYPES,
   TOOL_CALL_LIFECYCLES,
   isApiEnvelope,
+  KNOWLEDGE_OPENAPI_OPERATIONS,
+  KNOWLEDGE_UPLOAD_POLICY,
 } from "./index";
 import type {
   ApiError,
@@ -22,6 +24,8 @@ import type {
   RegisterRequest,
   SuccessEnvelope,
   ToolCallEvent,
+  BackgroundJob,
+  BackgroundJobEvent,
 } from "./index";
 
 describe("HTTP 合同", () => {
@@ -84,6 +88,7 @@ describe("HTTP 合同", () => {
       "AUTH_INVALID_CREDENTIALS",
       "AUTH_EMAIL_ALREADY_REGISTERED",
       "BUSINESS_RULE_VIOLATION",
+      "BUSINESS_CONFLICT",
       "BUSINESS_RESOURCE_NOT_FOUND",
       "VALIDATION_REQUEST_INVALID",
       "SYSTEM_ROUTE_NOT_FOUND",
@@ -139,6 +144,14 @@ describe("HTTP 合同", () => {
       "/auth/login",
       "/auth/logout",
       "/auth/me",
+      "/background-jobs",
+      "/background-jobs/{id}",
+      "/background-jobs/{id}:cancel",
+      "/background-jobs/{id}:retry",
+      "/knowledge-bases",
+      "/knowledge-bases/{kb}/documents",
+      "/knowledge-bases/{kb}/documents/{document}",
+      "/knowledge-bases/{kb}/documents/{document}/chunk-preview",
     ]);
     expect(OPENAPI_PATHS["/auth/register"]).toEqual({
       method: "POST",
@@ -166,6 +179,24 @@ describe("HTTP 合同", () => {
     });
   });
 
+  it("登记知识文档上传 policy 与六种 OpenAPI 操作", () => {
+    expect(KNOWLEDGE_UPLOAD_POLICY).toEqual({
+      maxBytes: 10 * 1024 * 1024,
+      allowedTypes: { ".md": "text/markdown", ".pdf": "application/pdf" },
+      multipart: { file: "file", chunkingConfig: "chunkingConfig", overwrite: "overwrite" },
+      strategies: ["fixed-character", "markdown-heading", "paragraph"],
+    });
+    expect(KNOWLEDGE_OPENAPI_OPERATIONS.map((item) => item.operationId)).toEqual([
+      "listKnowledgeBases", "listKnowledgeDocuments", "uploadKnowledgeDocument",
+      "getKnowledgeDocument", "deleteKnowledgeDocument", "previewKnowledgeDocumentChunks",
+    ]);
+    for (const operation of KNOWLEDGE_OPENAPI_OPERATIONS) {
+      expect(operation.security).toEqual(["BearerAuth"]);
+      expect(operation.errors).toEqual(expect.arrayContaining(["AUTH_REQUIRED", "AUTH_FORBIDDEN"]));
+      expect(operation.successData.length).toBeGreaterThan(0);
+    }
+  });
+
   it("所有受保护 path 复用统一 bearer、401 与 403 policy", () => {
     expect(PROTECTED_PATH_POLICY).toEqual({
       security: "BearerAuth",
@@ -175,7 +206,9 @@ describe("HTTP 合同", () => {
 
     for (const [path, definition] of Object.entries(OPENAPI_PATHS)) {
       if (definition.security?.includes("BearerAuth")) {
-        expect(definition.errors, path).toEqual(PROTECTED_PATH_POLICY.errors);
+        expect(definition.errors, path).toEqual(
+          expect.arrayContaining([...PROTECTED_PATH_POLICY.errors]),
+        );
       }
     }
     expect(ERROR_DEFINITIONS.BUSINESS_RESOURCE_NOT_FOUND).toEqual({
@@ -184,6 +217,29 @@ describe("HTTP 合同", () => {
       httpStatus: 404,
       defaultMessage: "请求的资源不存在",
     });
+  });
+
+  it("登记持久后台任务 DTO 与四个受保护 path", () => {
+    const job: BackgroundJob = {
+      id: "job-1", ownerUserId: "user-1", kind: "index.document", status: "queued",
+      payload: { documentId: "doc-1" }, attempt: 0, maxAttempts: 3, timeoutSeconds: 300,
+      availableAt: "2026-08-12T00:00:00Z", createdAt: "2026-08-12T00:00:00Z",
+      updatedAt: "2026-08-12T00:00:00Z",
+    };
+    const event: BackgroundJobEvent = {
+      sequence: 1, jobId: job.id, ownerUserId: job.ownerUserId, type: "queued",
+      data: {}, createdAt: "2026-08-12T00:00:00Z",
+    };
+    expect(event.type).toBe(job.status);
+    for (const path of [
+      "/background-jobs", "/background-jobs/{id}",
+      "/background-jobs/{id}:cancel", "/background-jobs/{id}:retry",
+    ] as const) {
+      expect(OPENAPI_PATHS[path].security).toEqual(["BearerAuth"]);
+      expect(OPENAPI_PATHS[path].errors).toEqual(expect.arrayContaining(["AUTH_REQUIRED", "AUTH_FORBIDDEN"]));
+    }
+    expect(job).not.toHaveProperty("heartbeatAt");
+    expect(job).not.toHaveProperty("result");
   });
 
   it("拒绝 code 或元数据偏离稳定目录的失败 envelope", () => {

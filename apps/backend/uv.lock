@@ -2627,6 +2627,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pymilvus" },
     { name = "pypdf" },
+    { name = "python-multipart" },
     { name = "rank-bm25" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
@@ -2655,6 +2656,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10,<3" },
     { name = "pymilvus", specifier = ">=3,<4" },
     { name = "pypdf", specifier = ">=5,<7" },
+    { name = "python-multipart", specifier = ">=0.0.20,<1" },
     { name = "rank-bm25", specifier = ">=0.2.2,<1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2,<3" },
 ]

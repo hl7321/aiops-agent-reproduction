@@ -11,6 +11,7 @@ ErrorCode: TypeAlias = Literal[
     "AUTH_INVALID_CREDENTIALS",
     "AUTH_EMAIL_ALREADY_REGISTERED",
     "BUSINESS_RULE_VIOLATION",
+    "BUSINESS_CONFLICT",
     "BUSINESS_RESOURCE_NOT_FOUND",
     "VALIDATION_REQUEST_INVALID",
     "SYSTEM_ROUTE_NOT_FOUND",
@@ -48,6 +49,16 @@ SSE_EVENT_TYPES: Final[tuple[SseEventType, ...]] = (
     "complete",
     "error",
 )
+KNOWLEDGE_UPLOAD_POLICY: Final[dict[str, object]] = {
+    "maxBytes": 10 * 1024 * 1024,
+    "allowedTypes": {".md": "text/markdown", ".pdf": "application/pdf"},
+    "multipart": {
+        "file": "file",
+        "chunkingConfig": "chunkingConfig",
+        "overwrite": "overwrite",
+    },
+    "strategies": ["fixed-character", "markdown-heading", "paragraph"],
+}
 TOOL_CALL_LIFECYCLES: Final[tuple[ToolCallLifecycle, ...]] = (
     "started",
     "delta",
@@ -105,6 +116,12 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         category="business",
         http_status=409,
         default_message="请求与当前业务规则冲突",
+    ),
+    "BUSINESS_CONFLICT": ErrorDefinition(
+        code="BUSINESS_CONFLICT",
+        category="business",
+        http_status=409,
+        default_message="相同内容的文档已存在",
     ),
     "BUSINESS_RESOURCE_NOT_FOUND": ErrorDefinition(
         code="BUSINESS_RESOURCE_NOT_FOUND",
@@ -209,6 +226,88 @@ class LoginData(ContractModel):
 
 class LogoutData(ContractModel):
     revoked: Literal[True] = True
+
+
+BackgroundJobStatus: TypeAlias = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+
+
+class BackgroundJob(ContractModel):
+    id: str
+    owner_user_id: str = Field(alias="ownerUserId")
+    kind: str
+    resource_type: str | None = Field(default=None, alias="resourceType")
+    resource_id: str | None = Field(default=None, alias="resourceId")
+    status: BackgroundJobStatus
+    payload: JsonValue
+    attempt: int
+    max_attempts: int = Field(alias="maxAttempts")
+    timeout_seconds: int = Field(alias="timeoutSeconds")
+    available_at: str = Field(alias="availableAt")
+    lease_owner: str | None = Field(default=None, alias="leaseOwner")
+    lease_expires_at: str | None = Field(default=None, alias="leaseExpiresAt")
+    cancel_requested_at: str | None = Field(default=None, alias="cancelRequestedAt")
+    retry_of_job_id: str | None = Field(default=None, alias="retryOfJobId")
+    error_message: str | None = Field(default=None, alias="errorMessage")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    started_at: str | None = Field(default=None, alias="startedAt")
+    completed_at: str | None = Field(default=None, alias="completedAt")
+
+
+class BackgroundJobEvent(ContractModel):
+    sequence: int
+    job_id: str = Field(alias="jobId")
+    owner_user_id: str = Field(alias="ownerUserId")
+    type: BackgroundJobStatus
+    data: JsonValue
+    created_at: str = Field(alias="createdAt")
+
+
+class BackgroundJobListData(ContractModel):
+    items: list[BackgroundJob]
+
+
+class KnowledgeBaseModel(ContractModel):
+    id: str
+    name: str = "默认知识库"
+    is_default: Literal[True] = Field(default=True, alias="isDefault")
+
+
+class KnowledgeBaseListData(ContractModel):
+    items: list[KnowledgeBaseModel]
+
+
+class ChunkingConfigModel(ContractModel):
+    strategy: Literal["fixed-character", "markdown-heading", "paragraph"]
+    max_characters: int | None = Field(default=None, alias="maxCharacters")
+    overlap: int | None = None
+
+
+class KnowledgeDocumentModel(ContractModel):
+    id: str
+    knowledge_base_id: str = Field(alias="knowledgeBaseId")
+    filename: str
+    size_bytes: int = Field(alias="sizeBytes")
+    mime_type: Literal["text/markdown", "application/pdf"] = Field(alias="mimeType")
+    sha256: str
+    uploaded_at: str = Field(alias="uploadedAt")
+    index_status: Literal["not-indexed"] = Field(alias="indexStatus")
+    chunking_config: ChunkingConfigModel = Field(alias="chunkingConfig")
+
+
+class KnowledgeDocumentListData(ContractModel):
+    items: list[KnowledgeDocumentModel]
+
+
+class ChunkPreviewItemModel(ContractModel):
+    index: int
+    excerpt: str
+    metadata: dict[str, JsonValue]
+
+
+class ChunkPreviewData(ContractModel):
+    total_chunks: int = Field(alias="totalChunks")
+    items: list[ChunkPreviewItemModel]
 
 
 class SseEventBase(ContractModel):

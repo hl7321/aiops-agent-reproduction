@@ -32,11 +32,17 @@ with (
     assert list(tmp_path.iterdir()) == []
 
 
-def test_p05_adds_no_product_table_or_migration_revision() -> None:
+def test_p05_adds_no_tenant_specific_migration_revision() -> None:
     revisions = sorted((ROOT / "migrations/versions").glob("*.py"))
 
-    assert [path.name for path in revisions] == [
-        "20260808_0001_persistence_foundation.py",
-        "20260808_0002_add_user_authentication.py",
-    ]
-    assert set(Base.metadata.tables) == {"users", "auth_sessions"}
+    names = [path.name for path in revisions]
+    assert "20260808_0001_persistence_foundation.py" in names
+    assert "20260808_0002_add_user_authentication.py" in names
+    assert not any("tenant" in name for name in names)
+    assert set(Base.metadata.tables) == {
+        "users",
+        "auth_sessions",
+        "background_jobs",
+        "background_job_events",
+        "knowledge_documents",
+    }

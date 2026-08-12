@@ -28,6 +28,17 @@ export const OPENAPI_SECURITY_SCHEMES = manifest.openapi.securitySchemes as unkn
   Record<OpenApiSecuritySchemeName, OpenApiSecuritySchemeDefinition>
 >;
 
+export interface OpenApiOperation {
+  readonly path: string;
+  readonly method: HttpMethod;
+  readonly operationId: string;
+  readonly successData: string;
+  readonly security: readonly OpenApiSecuritySchemeName[];
+  readonly errors: readonly ErrorCode[];
+}
+
+export const KNOWLEDGE_OPENAPI_OPERATIONS = manifest.openapi.knowledgeOperations as readonly OpenApiOperation[];
+
 export interface ProtectedPathPolicy {
   readonly security: OpenApiSecuritySchemeName;
   readonly errors: readonly ErrorCode[];

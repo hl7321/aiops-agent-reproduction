@@ -7,10 +7,13 @@ from pydantic import TypeAdapter
 
 from super_ai.api_contracts import (
     ERROR_DEFINITIONS,
+    KNOWLEDGE_UPLOAD_POLICY,
     SSE_EVENT_TYPES,
     TOOL_CALL_LIFECYCLES,
     ApiErrorModel,
     AuthUser,
+    BackgroundJob,
+    BackgroundJobEvent,
     ErrorEvent,
     LoginData,
     LogoutData,
@@ -49,7 +52,68 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
     }
     assert LogoutData().model_dump(by_alias=True) == {"revoked": True}
     assert openapi["securitySchemes"] == {"BearerAuth": {"type": "http", "scheme": "bearer"}}
-    assert set(paths) == {"/health", "/auth/register", "/auth/login", "/auth/logout", "/auth/me"}
+    assert set(paths) == {
+        "/health",
+        "/auth/register",
+        "/auth/login",
+        "/auth/logout",
+        "/auth/me",
+        "/background-jobs",
+        "/background-jobs/{id}",
+        "/background-jobs/{id}:cancel",
+        "/background-jobs/{id}:retry",
+        "/knowledge-bases",
+        "/knowledge-bases/{kb}/documents",
+        "/knowledge-bases/{kb}/documents/{document}",
+        "/knowledge-bases/{kb}/documents/{document}/chunk-preview",
+    }
+
+    operations = cast(list[dict[str, str]], openapi["knowledgeOperations"])
+    schema = create_app().openapi()
+    for operation in operations:
+        actual = schema["paths"][operation["path"]][operation["method"].lower()]
+        assert actual["operationId"] == operation["operationId"]
+
+
+def test_background_job_python_contracts_use_shared_camel_case_shape() -> None:
+    job = BackgroundJob.model_validate(
+        {
+            "id": "job-1",
+            "ownerUserId": "user-1",
+            "kind": "index.document",
+            "status": "queued",
+            "payload": {"documentId": "doc-1"},
+            "attempt": 0,
+            "maxAttempts": 3,
+            "timeoutSeconds": 300,
+            "availableAt": "2026-08-12T00:00:00Z",
+            "createdAt": "2026-08-12T00:00:00Z",
+            "updatedAt": "2026-08-12T00:00:00Z",
+        }
+    )
+    event = BackgroundJobEvent.model_validate(
+        {
+            "sequence": 1,
+            "jobId": job.id,
+            "ownerUserId": job.owner_user_id,
+            "type": "queued",
+            "data": {},
+            "createdAt": "2026-08-12T00:00:00Z",
+        }
+    )
+    serialized = job.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert serialized["ownerUserId"] == "user-1"
+    assert "heartbeatAt" not in serialized and "result" not in serialized
+    assert event.model_dump(mode="json", by_alias=True)["jobId"] == "job-1"
+
+
+def test_knowledge_upload_policy_matches_typescript_contract() -> None:
+    assert KNOWLEDGE_UPLOAD_POLICY == {
+        "maxBytes": 10 * 1024 * 1024,
+        "allowedTypes": {".md": "text/markdown", ".pdf": "application/pdf"},
+        "multipart": {"file": "file", "chunkingConfig": "chunkingConfig", "overwrite": "overwrite"},
+        "strategies": ["fixed-character", "markdown-heading", "paragraph"],
+    }
 
 
 def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
@@ -67,13 +131,11 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         actual_security = [next(iter(item)) for item in operation.get("security", [])]
         assert actual_security == expected_security
         expected_errors = cast(list[str], expected.get("errors", []))
-        actual_errors = sorted(
-            code for code in operation.get("responses", {}) if code in {"401", "403"}
-        )
+        actual_errors = sorted(code for code in operation.get("responses", {}) if code != "200")
         error_statuses = sorted(
             str(expected_error_definitions[code]["httpStatus"]) for code in expected_errors
         )
-        assert actual_errors == error_statuses
+        assert set(error_statuses).issubset(actual_errors)
 
 
 @pytest.mark.parametrize(

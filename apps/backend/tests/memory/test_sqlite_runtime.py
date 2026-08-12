@@ -47,7 +47,13 @@ async def runtime(sqlite_database_url: str) -> AsyncIterator[PersistenceRuntime]
 
 
 def test_product_base_registers_only_current_domain_tables() -> None:
-    assert set(Base.metadata.tables) == {"users", "auth_sessions"}
+    assert set(Base.metadata.tables) == {
+        "users",
+        "auth_sessions",
+        "background_jobs",
+        "background_job_events",
+        "knowledge_documents",
+    }
 
 
 @pytest.mark.parametrize(
