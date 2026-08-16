@@ -72,6 +72,22 @@ class SqliteBackgroundJobStore:
         model = await self._owned(owner_user_id, job_id)
         return _job_record(model) if model is not None else None
 
+    async def get_by_resource(
+        self, owner_user_id: str, resource_type: str, resource_id: str
+    ) -> BackgroundJobRecord | None:
+        _require_owner(owner_user_id)
+        model = await self._session.scalar(
+            select(BackgroundJobModel)
+            .where(
+                BackgroundJobModel.owner_user_id == owner_user_id,
+                BackgroundJobModel.resource_type == resource_type,
+                BackgroundJobModel.resource_id == resource_id,
+            )
+            .order_by(BackgroundJobModel.created_at.desc())
+            .limit(1)
+        )
+        return _job_record(model) if model is not None else None
+
     async def request_cancel(self, owner_user_id: str, job_id: str) -> BackgroundJobRecord | None:
         model = await self._owned(owner_user_id, job_id)
         if model is None:

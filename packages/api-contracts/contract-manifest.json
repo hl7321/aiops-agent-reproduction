@@ -152,6 +152,18 @@
       "/knowledge-bases/{kb}/documents/{document}/chunk-preview": {
         "method": "GET", "operationId": "previewKnowledgeDocumentChunks", "successData": "ChunkPreviewData",
         "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/knowledge-bases/{kb}/documents/{document}/index-tasks": {
+        "method": "POST", "operationId": "createDocumentIndexTask", "successData": "DocumentIndexTask",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_CONFLICT"]
+      },
+      "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}": {
+        "method": "GET", "operationId": "getDocumentIndexTask", "successData": "DocumentIndexTask",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry": {
+        "method": "POST", "operationId": "retryDocumentIndexTask", "successData": "DocumentIndexTask",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_RULE_VIOLATION"]
       }
     },
     "knowledgeOperations": [
@@ -161,6 +173,11 @@
       {"path":"/knowledge-bases/{kb}/documents/{document}","method":"GET","operationId":"getKnowledgeDocument","successData":"KnowledgeDocument","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
       {"path":"/knowledge-bases/{kb}/documents/{document}","method":"DELETE","operationId":"deleteKnowledgeDocument","successData":"KnowledgeDocument","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
       {"path":"/knowledge-bases/{kb}/documents/{document}/chunk-preview","method":"GET","operationId":"previewKnowledgeDocumentChunks","successData":"ChunkPreviewData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]}
+    ],
+    "documentIndexOperations": [
+      {"path":"/knowledge-bases/{kb}/documents/{document}/index-tasks","method":"POST","operationId":"createDocumentIndexTask","successData":"DocumentIndexTask","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT"]},
+      {"path":"/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}","method":"GET","operationId":"getDocumentIndexTask","successData":"DocumentIndexTask","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry","method":"POST","operationId":"retryDocumentIndexTask","successData":"DocumentIndexTask","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_RULE_VIOLATION"]}
     ]
   },
   "sse": {

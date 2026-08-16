@@ -11,6 +11,7 @@ import {
   isApiEnvelope,
   KNOWLEDGE_OPENAPI_OPERATIONS,
   KNOWLEDGE_UPLOAD_POLICY,
+  DOCUMENT_INDEX_OPENAPI_OPERATIONS,
 } from "./index";
 import type {
   ApiError,
@@ -26,6 +27,11 @@ import type {
   ToolCallEvent,
   BackgroundJob,
   BackgroundJobEvent,
+  DocumentIndexTask,
+  DocumentIndexStatus,
+  KnowledgeRetrievalCitation,
+  KnowledgeRetrievalToolInput,
+  KnowledgeRetrievalToolOutput,
 } from "./index";
 
 describe("HTTP 合同", () => {
@@ -152,6 +158,9 @@ describe("HTTP 合同", () => {
       "/knowledge-bases/{kb}/documents",
       "/knowledge-bases/{kb}/documents/{document}",
       "/knowledge-bases/{kb}/documents/{document}/chunk-preview",
+      "/knowledge-bases/{kb}/documents/{document}/index-tasks",
+      "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}",
+      "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry",
     ]);
     expect(OPENAPI_PATHS["/auth/register"]).toEqual({
       method: "POST",
@@ -195,6 +204,57 @@ describe("HTTP 合同", () => {
       expect(operation.errors).toEqual(expect.arrayContaining(["AUTH_REQUIRED", "AUTH_FORBIDDEN"]));
       expect(operation.successData.length).toBeGreaterThan(0);
     }
+  });
+
+  it("登记无 jobId 的 durable 文档索引任务与三种操作", () => {
+    const statuses: readonly DocumentIndexStatus[] = [
+      "pending", "running", "succeeded", "failed", "cancelled",
+    ];
+    const task: DocumentIndexTask = {
+      id: "task-1", knowledgeBaseId: "kb-1", documentId: "doc-1", status: "failed",
+      failureReason: "provider unavailable", retryOfTaskId: null,
+      createdAt: "2026-08-13T00:00:00Z", updatedAt: "2026-08-13T00:01:00Z",
+      startedAt: "2026-08-13T00:00:10Z", completedAt: "2026-08-13T00:01:00Z",
+    };
+    expect(statuses).toEqual(["pending", "running", "succeeded", "failed", "cancelled"]);
+    expect(task).not.toHaveProperty("jobId");
+    expect(DOCUMENT_INDEX_OPENAPI_OPERATIONS.map((item) => item.operationId)).toEqual([
+      "createDocumentIndexTask", "getDocumentIndexTask", "retryDocumentIndexTask",
+    ]);
+    expect(DOCUMENT_INDEX_OPENAPI_OPERATIONS.every((item) =>
+      item.security.includes("BearerAuth") && item.successData === "DocumentIndexTask"
+    )).toBe(true);
+  });
+
+  it("登记不暴露 owner/tenant 或 HTTP path 的 knowledge retrieval Tool 合同", () => {
+    const input: KnowledgeRetrievalToolInput = {
+      query: "订单服务 trace_id",
+      topK: 3,
+      knowledgeBaseIds: ["kb-1"],
+      documentIds: ["doc-1"],
+    };
+    const citation: KnowledgeRetrievalCitation = {
+      chunkId: "chunk-1",
+      documentId: "doc-1",
+      knowledgeBaseId: "kb-1",
+      source: "runbook.md",
+      excerpt: "trace_id 对应订单服务异常",
+      metadata: { strategy: "paragraph", index: 0 },
+      vectorRank: 1,
+      vectorScore: 0.9,
+      bm25Rank: null,
+      bm25Score: null,
+      rrfScore: 1 / 61,
+      rerankRank: 1,
+      rerankScore: 0.12,
+      score: 0.12,
+    };
+    const output: KnowledgeRetrievalToolOutput = { results: [citation] };
+
+    expect(input).not.toHaveProperty("ownerUserId");
+    expect(input).not.toHaveProperty("tenantId");
+    expect(output.results[0]?.score).toBe(output.results[0]?.rerankScore);
+    expect(Object.keys(OPENAPI_PATHS).some((path) => path.includes("search"))).toBe(false);
   });
 
   it("所有受保护 path 复用统一 bearer、401 与 403 policy", () => {

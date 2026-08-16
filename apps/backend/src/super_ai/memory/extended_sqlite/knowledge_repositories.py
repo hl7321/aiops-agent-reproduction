@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from super_ai.api_contracts import DocumentIndexStatus
 from super_ai.knowledge.chunking import ChunkingConfig, ChunkingStrategy
 from super_ai.knowledge.files import ExtractedDocument
 from super_ai.knowledge.models import KnowledgeDocumentRecord
@@ -50,6 +51,34 @@ class SqliteKnowledgeDocumentRepository:
         )
         return _record(model) if model is not None else None
 
+    async def list_retrieval_corpus(
+        self,
+        owner_user_id: str,
+        knowledge_base_ids: tuple[str, ...],
+        *,
+        document_ids: tuple[str, ...] | None = None,
+    ) -> list[KnowledgeDocumentRecord]:
+        if not owner_user_id.strip():
+            raise ValueError("owner_user_id 不得为空")
+        if not knowledge_base_ids or document_ids == ():
+            return []
+        conditions = [
+            KnowledgeDocumentModel.owner_user_id == owner_user_id,
+            KnowledgeDocumentModel.knowledge_base_id.in_(knowledge_base_ids),
+            KnowledgeDocumentModel.index_status == "succeeded",
+            KnowledgeDocumentModel.deleted_at.is_(None),
+        ]
+        if document_ids is not None:
+            conditions.append(KnowledgeDocumentModel.id.in_(document_ids))
+        models = (
+            await self._session.scalars(
+                select(KnowledgeDocumentModel)
+                .where(*conditions)
+                .order_by(KnowledgeDocumentModel.id)
+            )
+        ).all()
+        return [_record(model) for model in models]
+
     async def find_active_by_hash(
         self, owner_user_id: str, knowledge_base_id: str, sha256: str
     ) -> list[KnowledgeDocumentRecord]:
@@ -85,7 +114,7 @@ class SqliteKnowledgeDocumentRepository:
             mime_type=extracted.mime_type,
             sha256=extracted.sha256,
             uploaded_at=now,
-            index_status="not-indexed",
+            index_status="pending",
             chunking_strategy=strategy,
             max_characters=max_characters,
             overlap=overlap,
@@ -121,6 +150,27 @@ class SqliteKnowledgeDocumentRepository:
         )
         return _record(model) if model is not None else None
 
+    async def set_index_status(
+        self,
+        owner_user_id: str,
+        knowledge_base_id: str,
+        document_id: str,
+        status: DocumentIndexStatus,
+        updated_at: datetime,
+    ) -> KnowledgeDocumentRecord | None:
+        model = await self._session.scalar(
+            update(KnowledgeDocumentModel)
+            .where(
+                KnowledgeDocumentModel.owner_user_id == owner_user_id,
+                KnowledgeDocumentModel.knowledge_base_id == knowledge_base_id,
+                KnowledgeDocumentModel.id == document_id,
+                KnowledgeDocumentModel.deleted_at.is_(None),
+            )
+            .values(index_status=status, updated_at=updated_at)
+            .returning(KnowledgeDocumentModel)
+        )
+        return _record(model) if model is not None else None
+
 
 def _record(model: KnowledgeDocumentModel) -> KnowledgeDocumentRecord:
     strategy = cast(ChunkingStrategy, model.chunking_strategy)
@@ -136,7 +186,7 @@ def _record(model: KnowledgeDocumentModel) -> KnowledgeDocumentRecord:
         mime_type=model.mime_type,
         sha256=model.sha256,
         uploaded_at=model.uploaded_at,
-        index_status=model.index_status,
+        index_status=cast(DocumentIndexStatus, model.index_status),
         chunking_config=ChunkingConfig.model_validate(values),
         indexable_text=model.indexable_text,
         deleted_at=model.deleted_at,

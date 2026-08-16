@@ -55,7 +55,7 @@ def _document(record: KnowledgeDocumentRecord) -> KnowledgeDocumentModel:
         mimeType=cast(Literal["text/markdown", "application/pdf"], record.mime_type),
         sha256=record.sha256,
         uploadedAt=_iso(record.uploaded_at),
-        indexStatus="not-indexed",
+        indexStatus=record.index_status,
         chunkingConfig=_config(record.chunking_config),
     )
 

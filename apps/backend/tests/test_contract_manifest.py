@@ -66,11 +66,17 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         "/knowledge-bases/{kb}/documents",
         "/knowledge-bases/{kb}/documents/{document}",
         "/knowledge-bases/{kb}/documents/{document}/chunk-preview",
+        "/knowledge-bases/{kb}/documents/{document}/index-tasks",
+        "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}",
+        "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry",
     }
 
     operations = cast(list[dict[str, str]], openapi["knowledgeOperations"])
     schema = create_app().openapi()
     for operation in operations:
+        actual = schema["paths"][operation["path"]][operation["method"].lower()]
+        assert actual["operationId"] == operation["operationId"]
+    for operation in cast(list[dict[str, str]], openapi["documentIndexOperations"]):
         actual = schema["paths"][operation["path"]][operation["method"].lower()]
         assert actual["operationId"] == operation["operationId"]
 

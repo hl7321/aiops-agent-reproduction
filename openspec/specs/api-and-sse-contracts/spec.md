@@ -138,3 +138,33 @@
 #### Scenario: 合同消费者读取知识 path
 - **WHEN** 遍历机器可读 path 目录
 - **THEN** 六种操作具有稳定 method、operationId、成功 DTO、安全方案与错误列表
+
+### Requirement: 共享合同登记 durable 文档索引任务
+共享合同 SHALL 定义 DocumentIndexTask DTO、`pending|running|succeeded|failed|cancelled` 状态联合、failureReason/retryOfTaskId 可选字段，以及创建任务、读取详情和 retry 三种受保护操作。机器可读 OpenAPI 目录 MUST 使用 bearer、统一 envelope/requestId，并复用 401/403/404/validation 错误；retry 返回新的任务 DTO。
+
+#### Scenario: 合同消费者读取索引状态
+- **WHEN** 前端或后端读取共享索引任务合同
+- **THEN** 获得精确五种领域状态，且 queued 不是公开领域状态
+
+#### Scenario: 合同消费者读取索引操作
+- **WHEN** 遍历机器可读 path 目录
+- **THEN** 创建、详情和 retry 具有稳定 method、operationId、成功 DTO、安全方案与错误列表
+
+#### Scenario: API 返回 UI-ready 任务
+- **WHEN** owner 创建、查询或重试索引任务
+- **THEN** 成功 envelope 的 data 包含 task、document、KB、状态、failureReason、retryOfTaskId 和时间戳，且不包含 jobId
+
+### Requirement: 共享合同登记 Knowledge Retrieval Tool
+共享合同 SHALL 定义 KnowledgeRetrievalToolInput、KnowledgeRetrievalToolOutput 与 KnowledgeRetrievalCitation 类型。输入包含 query、可选 topK、knowledgeBaseIds 和 documentIds，但 MUST NOT 包含 ownerUserId 或 tenantId；citation 包含稳定 chunk/document/KB id、source/excerpt/metadata、vectorRank/vectorScore、bm25Rank/bm25Score、rrfScore、rerankRank/rerankScore 及兼容 score。此合同 MUST NOT 在机器可读 OpenAPI path 目录增加独立搜索 endpoint。
+
+#### Scenario: 合同消费者创建 Tool 输入
+- **WHEN** Agent 层使用共享 input 类型调用 knowledge_retrieval
+- **THEN** 可表达 query、topK 和资源过滤，但不能通过合同传入 owner 或 tenant
+
+#### Scenario: 合同消费者读取完整 citation
+- **WHEN** Tool 返回双路或单路候选
+- **THEN** citation 的阶段 rank/score 具有精确可空语义，且 score 与 rerankScore 均为必填数值
+
+#### Scenario: OpenAPI 不暴露搜索产品 API
+- **WHEN** 合同测试遍历机器可读 path 目录
+- **THEN** 不存在为本 Tool 新增的独立 knowledge search HTTP path

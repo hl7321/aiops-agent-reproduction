@@ -1,8 +1,15 @@
 from typing import NoReturn
 
 import httpx
+import pytest
 from fastapi import FastAPI, Request
+from pydantic import ValidationError
 
+from super_ai.api_contracts import (
+    KnowledgeRetrievalCitation,
+    KnowledgeRetrievalToolInput,
+    KnowledgeRetrievalToolOutput,
+)
 from super_ai.api_responses import AppError, success_response
 from super_ai.app import create_app
 
@@ -136,3 +143,34 @@ async def test_framework_404_and_405_use_registered_failure_envelopes() -> None:
         },
         "meta": {"requestId": "req-405"},
     }
+
+
+def test_knowledge_retrieval_contract_has_safe_input_and_complete_citation() -> None:
+    tool_input = KnowledgeRetrievalToolInput(query="订单 trace_id")
+    citation = KnowledgeRetrievalCitation(
+        chunkId="chunk-1",
+        documentId="doc-1",
+        knowledgeBaseId="kb-1",
+        source="runbook.md",
+        excerpt="trace_id 对应订单异常",
+        metadata={"index": 0},
+        vectorRank=1,
+        vectorScore=0.9,
+        bm25Rank=None,
+        bm25Score=None,
+        rrfScore=1 / 61,
+        rerankRank=1,
+        rerankScore=0.12,
+        score=0.12,
+    )
+    payload = KnowledgeRetrievalToolOutput(results=[citation]).model_dump(by_alias=True)
+
+    assert tool_input.top_k == 5
+    assert "ownerUserId" not in KnowledgeRetrievalToolInput.model_fields
+    assert "tenantId" not in KnowledgeRetrievalToolInput.model_fields
+    assert payload["results"][0]["score"] == payload["results"][0]["rerankScore"]
+    assert payload["results"][0]["bm25Rank"] is None
+    with pytest.raises(ValidationError):
+        KnowledgeRetrievalToolInput(query="   ")
+    with pytest.raises(ValidationError):
+        KnowledgeRetrievalToolInput(query="valid", topK=6)

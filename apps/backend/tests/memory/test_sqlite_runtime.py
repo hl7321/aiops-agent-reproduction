@@ -53,6 +53,7 @@ def test_product_base_registers_only_current_domain_tables() -> None:
         "background_jobs",
         "background_job_events",
         "knowledge_documents",
+        "document_index_tasks",
     }
 
 

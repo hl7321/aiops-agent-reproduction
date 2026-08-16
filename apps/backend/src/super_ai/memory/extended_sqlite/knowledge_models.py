@@ -15,6 +15,10 @@ class KnowledgeDocumentModel(Base):
     __table_args__ = (
         CheckConstraint("size_bytes > 0 AND size_bytes <= 10485760", name="ck_documents_size"),
         CheckConstraint("length(sha256) = 64", name="ck_documents_sha256"),
+        CheckConstraint(
+            "index_status IN ('pending','running','succeeded','failed','cancelled')",
+            name="ck_knowledge_documents_index_status",
+        ),
         Index("ix_documents_owner_kb", "owner_user_id", "knowledge_base_id"),
         Index(
             "uq_documents_active_hash",

@@ -2,8 +2,12 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from super_ai.knowledge.chunking import ChunkingConfig
+
+if TYPE_CHECKING:
+    from super_ai.api_contracts import DocumentIndexStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,7 +20,7 @@ class KnowledgeDocumentRecord:
     mime_type: str
     sha256: str
     uploaded_at: datetime
-    index_status: str
+    index_status: "DocumentIndexStatus"
     chunking_config: ChunkingConfig
     indexable_text: str
     deleted_at: datetime | None

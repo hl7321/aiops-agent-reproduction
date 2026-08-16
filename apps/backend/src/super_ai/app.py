@@ -1,5 +1,7 @@
 """FastAPI 应用工厂。"""
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -12,12 +14,16 @@ from super_ai.api_responses import AppError, error_response, success_response
 from super_ai.auth.router import router as auth_router
 from super_ai.auth.service import AuthServiceError
 from super_ai.background_jobs.handlers import HandlerRegistry
-from super_ai.background_jobs.lifespan import create_application_lifespan
+from super_ai.background_jobs.lifespan import HandlerFactory, create_application_lifespan
 from super_ai.background_jobs.router import router as background_jobs_router
 from super_ai.background_jobs.runtime import WorkerSettings
+from super_ai.document_indexing.factory import create_configured_document_index_handler_factory
+from super_ai.document_indexing.router import router as document_indexing_router
 from super_ai.knowledge.router import router as knowledge_router
-from super_ai.memory.config import DatabaseSettings
+from super_ai.llm.config import LlmSettings, load_llm_settings
+from super_ai.memory.config import DatabaseSettings, load_database_settings
 from super_ai.request_id import get_request_id, request_id_middleware
+from super_ai.vector_store.config import VectorStoreSettings, load_vector_store_settings
 
 
 async def health(request: Request) -> JSONResponse:
@@ -91,10 +97,25 @@ def create_app(
     *,
     background_job_registry: HandlerRegistry | None = None,
     worker_settings: WorkerSettings | None = None,
+    document_index_handler_factory: HandlerFactory | None = None,
+    llm_settings: LlmSettings | None = None,
+    vector_store_settings: VectorStoreSettings | None = None,
 ) -> FastAPI:
     """创建无外部连接副作用的最小 FastAPI 应用。"""
+    registry = background_job_registry or HandlerRegistry()
+    if (llm_settings is None) != (vector_store_settings is None):
+        raise ValueError("文档索引要求同时提供 LLM 与 vectorStore typed settings")
+    configured_factory = (
+        create_configured_document_index_handler_factory(llm_settings, vector_store_settings)
+        if llm_settings is not None and vector_store_settings is not None
+        else None
+    )
+    selected_factory = document_index_handler_factory or configured_factory
+    handler_factories = (selected_factory,) if selected_factory is not None else ()
     lifespan = (
-        create_application_lifespan(database_settings, background_job_registry, worker_settings)
+        create_application_lifespan(
+            database_settings, registry, worker_settings, handler_factories=handler_factories
+        )
         if database_settings is not None
         else None
     )
@@ -121,4 +142,14 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(background_jobs_router)
     app.include_router(knowledge_router)
+    app.include_router(document_indexing_router)
     return app
+
+
+def create_configured_app(project_path: Path, user_path: Path) -> FastAPI:
+    """只从显式本地 JSON 路径组装可执行应用；外部 client 仍由 handler 延迟创建。"""
+    return create_app(
+        load_database_settings(project_path, user_path),
+        llm_settings=load_llm_settings(project_path, user_path),
+        vector_store_settings=load_vector_store_settings(project_path, user_path),
+    )

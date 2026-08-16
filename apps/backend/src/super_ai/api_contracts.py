@@ -229,6 +229,9 @@ class LogoutData(ContractModel):
 
 
 BackgroundJobStatus: TypeAlias = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+DocumentIndexStatus: TypeAlias = Literal[
+    "pending", "running", "succeeded", "failed", "cancelled"
+]
 
 
 class BackgroundJob(ContractModel):
@@ -267,6 +270,19 @@ class BackgroundJobListData(ContractModel):
     items: list[BackgroundJob]
 
 
+class DocumentIndexTaskModel(ContractModel):
+    id: str
+    knowledge_base_id: str = Field(alias="knowledgeBaseId")
+    document_id: str = Field(alias="documentId")
+    status: DocumentIndexStatus
+    failure_reason: str | None = Field(default=None, alias="failureReason")
+    retry_of_task_id: str | None = Field(default=None, alias="retryOfTaskId")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    started_at: str | None = Field(default=None, alias="startedAt")
+    completed_at: str | None = Field(default=None, alias="completedAt")
+
+
 class KnowledgeBaseModel(ContractModel):
     id: str
     name: str = "默认知识库"
@@ -291,7 +307,7 @@ class KnowledgeDocumentModel(ContractModel):
     mime_type: Literal["text/markdown", "application/pdf"] = Field(alias="mimeType")
     sha256: str
     uploaded_at: str = Field(alias="uploadedAt")
-    index_status: Literal["not-indexed"] = Field(alias="indexStatus")
+    index_status: DocumentIndexStatus = Field(alias="indexStatus")
     chunking_config: ChunkingConfigModel = Field(alias="chunkingConfig")
 
 
@@ -308,6 +324,53 @@ class ChunkPreviewItemModel(ContractModel):
 class ChunkPreviewData(ContractModel):
     total_chunks: int = Field(alias="totalChunks")
     items: list[ChunkPreviewItemModel]
+
+
+class KnowledgeRetrievalToolInput(ContractModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", frozen=True)
+
+    query: str = Field(min_length=1, max_length=10_000)
+    topK: int = Field(default=5, ge=1, le=5)
+    knowledgeBaseIds: tuple[str, ...] | None = None
+    documentIds: tuple[str, ...] | None = None
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def strip_query(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @property
+    def top_k(self) -> int:
+        return self.topK
+
+    @property
+    def knowledge_base_ids(self) -> tuple[str, ...] | None:
+        return self.knowledgeBaseIds
+
+    @property
+    def document_ids(self) -> tuple[str, ...] | None:
+        return self.documentIds
+
+
+class KnowledgeRetrievalCitation(ContractModel):
+    chunk_id: str = Field(alias="chunkId")
+    document_id: str = Field(alias="documentId")
+    knowledge_base_id: str = Field(alias="knowledgeBaseId")
+    source: str
+    excerpt: str
+    metadata: dict[str, JsonValue]
+    vector_rank: int | None = Field(alias="vectorRank")
+    vector_score: float | None = Field(alias="vectorScore")
+    bm25_rank: int | None = Field(alias="bm25Rank")
+    bm25_score: float | None = Field(alias="bm25Score")
+    rrf_score: float = Field(alias="rrfScore")
+    rerank_rank: int = Field(alias="rerankRank")
+    rerank_score: float = Field(alias="rerankScore")
+    score: float
+
+
+class KnowledgeRetrievalToolOutput(ContractModel):
+    results: list[KnowledgeRetrievalCitation]
 
 
 class SseEventBase(ContractModel):

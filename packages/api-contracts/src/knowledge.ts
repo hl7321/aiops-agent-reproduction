@@ -20,7 +20,7 @@ export interface KnowledgeDocument {
   readonly mimeType: "text/markdown" | "application/pdf";
   readonly sha256: string;
   readonly uploadedAt: string;
-  readonly indexStatus: "not-indexed";
+  readonly indexStatus: import("./document-indexing").DocumentIndexStatus;
   readonly chunkingConfig: ChunkingConfig;
 }
 
