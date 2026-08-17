@@ -228,6 +228,66 @@ class LogoutData(ContractModel):
     revoked: Literal[True] = True
 
 
+ChatMessageRole: TypeAlias = Literal["user", "assistant", "system", "tool"]
+
+
+class ChatReference(ContractModel):
+    chunk_id: str = Field(alias="chunkId", min_length=1)
+    document_id: str = Field(alias="documentId", min_length=1)
+    knowledge_base_id: str = Field(alias="knowledgeBaseId", min_length=1)
+    source: str = Field(min_length=1)
+    excerpt: str | None = None
+
+
+class ChatMessageMetadata(ContractModel):
+    references: list[ChatReference] | None = None
+    tool_call_ids: list[str] | None = Field(default=None, alias="toolCallIds")
+
+
+class AppendChatMessageRequest(ContractModel):
+    role: ChatMessageRole
+    content: str = Field(min_length=1, max_length=100_000)
+    metadata: ChatMessageMetadata = Field(default_factory=ChatMessageMetadata)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content 不得为空")
+        return value
+
+
+class ChatMessage(ContractModel):
+    id: str
+    session_id: str = Field(alias="sessionId")
+    role: ChatMessageRole
+    content: str
+    sequence: int
+    metadata: ChatMessageMetadata
+    created_at: str = Field(alias="createdAt")
+
+
+class ChatSession(ContractModel):
+    id: str
+    title: str
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class ChatSessionListData(ContractModel):
+    sessions: list[ChatSession]
+
+
+class ChatSessionDetailData(ContractModel):
+    session: ChatSession
+    messages: list[ChatMessage]
+
+
+class ChatDeleteData(ContractModel):
+    deleted: Literal[True] = True
+    session_id: str = Field(alias="sessionId")
+
+
 BackgroundJobStatus: TypeAlias = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 DocumentIndexStatus: TypeAlias = Literal[
     "pending", "running", "succeeded", "failed", "cancelled"

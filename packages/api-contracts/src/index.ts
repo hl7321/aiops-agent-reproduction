@@ -1,5 +1,6 @@
 export * from "./auth";
 export * from "./background-jobs";
+export * from "./chat";
 export * from "./document-indexing";
 export * from "./errors";
 export * from "./http";

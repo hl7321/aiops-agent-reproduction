@@ -46,4 +46,6 @@ def test_p05_adds_no_tenant_specific_migration_revision() -> None:
         "background_job_events",
         "knowledge_documents",
         "document_index_tasks",
+        "chat_sessions",
+        "chat_messages",
     }

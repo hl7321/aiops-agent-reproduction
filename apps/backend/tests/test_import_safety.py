@@ -18,6 +18,8 @@ import super_ai.app
 import super_ai.background_jobs
 import super_ai.background_jobs.handlers
 import super_ai.background_jobs.runtime
+import super_ai.chat
+import super_ai.chat.router
 import super_ai.knowledge
 import super_ai.knowledge.chunking
 import super_ai.knowledge.files

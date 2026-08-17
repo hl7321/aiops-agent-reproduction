@@ -40,6 +40,8 @@ export interface OpenApiOperation {
 export const KNOWLEDGE_OPENAPI_OPERATIONS = manifest.openapi.knowledgeOperations as readonly OpenApiOperation[];
 export const DOCUMENT_INDEX_OPENAPI_OPERATIONS =
   manifest.openapi.documentIndexOperations as readonly OpenApiOperation[];
+export const CHAT_OPENAPI_OPERATIONS =
+  manifest.openapi.chatOperations as readonly OpenApiOperation[];
 
 export interface ProtectedPathPolicy {
   readonly security: OpenApiSecuritySchemeName;

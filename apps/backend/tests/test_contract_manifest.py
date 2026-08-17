@@ -58,6 +58,10 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         "/auth/login",
         "/auth/logout",
         "/auth/me",
+        "/chat/sessions",
+        "/chat/sessions/{id}",
+        "/chat/sessions/{id}/messages",
+        "/chat/sessions/{id}/messages:clear",
         "/background-jobs",
         "/background-jobs/{id}",
         "/background-jobs/{id}:cancel",
@@ -77,6 +81,9 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         actual = schema["paths"][operation["path"]][operation["method"].lower()]
         assert actual["operationId"] == operation["operationId"]
     for operation in cast(list[dict[str, str]], openapi["documentIndexOperations"]):
+        actual = schema["paths"][operation["path"]][operation["method"].lower()]
+        assert actual["operationId"] == operation["operationId"]
+    for operation in cast(list[dict[str, str]], openapi["chatOperations"]):
         actual = schema["paths"][operation["path"]][operation["method"].lower()]
         assert actual["operationId"] == operation["operationId"]
 

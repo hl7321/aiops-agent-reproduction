@@ -54,6 +54,8 @@ def test_product_base_registers_only_current_domain_tables() -> None:
         "background_job_events",
         "knowledge_documents",
         "document_index_tasks",
+        "chat_sessions",
+        "chat_messages",
     }
 
 

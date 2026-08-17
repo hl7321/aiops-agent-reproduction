@@ -109,6 +109,34 @@
         "security": ["BearerAuth"],
         "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
       },
+      "/chat/sessions": {
+        "method": "POST",
+        "operationId": "createChatSession",
+        "successData": "ChatSessionDetailData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/chat/sessions/{id}": {
+        "method": "GET",
+        "operationId": "getChatSession",
+        "successData": "ChatSessionDetailData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/chat/sessions/{id}/messages": {
+        "method": "POST",
+        "operationId": "appendChatMessage",
+        "successData": "ChatSessionDetailData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "VALIDATION_REQUEST_INVALID"]
+      },
+      "/chat/sessions/{id}/messages:clear": {
+        "method": "POST",
+        "operationId": "clearChatMessages",
+        "successData": "ChatSessionDetailData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
       "/background-jobs": {
         "method": "GET",
         "operationId": "listBackgroundJobs",
@@ -178,6 +206,14 @@
       {"path":"/knowledge-bases/{kb}/documents/{document}/index-tasks","method":"POST","operationId":"createDocumentIndexTask","successData":"DocumentIndexTask","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT"]},
       {"path":"/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}","method":"GET","operationId":"getDocumentIndexTask","successData":"DocumentIndexTask","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
       {"path":"/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry","method":"POST","operationId":"retryDocumentIndexTask","successData":"DocumentIndexTask","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_RULE_VIOLATION"]}
+    ],
+    "chatOperations": [
+      {"path":"/chat/sessions","method":"POST","operationId":"createChatSession","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/chat/sessions","method":"GET","operationId":"listChatSessions","successData":"ChatSessionListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/chat/sessions/{id}","method":"GET","operationId":"getChatSession","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/chat/sessions/{id}/messages","method":"POST","operationId":"appendChatMessage","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/chat/sessions/{id}/messages:clear","method":"POST","operationId":"clearChatMessages","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/chat/sessions/{id}","method":"DELETE","operationId":"deleteChatSession","successData":"ChatDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]}
     ]
   },
   "sse": {

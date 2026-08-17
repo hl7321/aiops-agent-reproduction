@@ -17,6 +17,7 @@ from super_ai.background_jobs.handlers import HandlerRegistry
 from super_ai.background_jobs.lifespan import HandlerFactory, create_application_lifespan
 from super_ai.background_jobs.router import router as background_jobs_router
 from super_ai.background_jobs.runtime import WorkerSettings
+from super_ai.chat.router import router as chat_router
 from super_ai.document_indexing.factory import create_configured_document_index_handler_factory
 from super_ai.document_indexing.router import router as document_indexing_router
 from super_ai.knowledge.router import router as knowledge_router
@@ -124,7 +125,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173"],
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
     app.add_exception_handler(AppError, app_error_handler)
@@ -141,6 +142,7 @@ def create_app(
     )
     app.include_router(auth_router)
     app.include_router(background_jobs_router)
+    app.include_router(chat_router)
     app.include_router(knowledge_router)
     app.include_router(document_indexing_router)
     return app
