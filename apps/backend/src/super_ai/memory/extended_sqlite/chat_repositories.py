@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import cast
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from super_ai.chat.models import (
+    ChatMemoryMode,
     ChatMessageRecord,
     ChatMessageRole,
     ChatSessionDetailRecord,
@@ -41,6 +43,35 @@ class SqliteChatRepository:
             )
         ).all()
         return [_session_record(model) for model in models]
+
+    async def list_details(self, owner_user_id: str) -> list[ChatSessionDetailRecord]:
+        sessions = (
+            await self._session.scalars(
+                select(ChatSessionModel)
+                .where(ChatSessionModel.owner_user_id == owner_user_id)
+                .order_by(ChatSessionModel.updated_at.desc(), ChatSessionModel.id.desc())
+            )
+        ).all()
+        if not sessions:
+            return []
+        session_ids = [item.id for item in sessions]
+        messages = (
+            await self._session.scalars(
+                select(ChatMessageModel)
+                .where(
+                    ChatMessageModel.owner_user_id == owner_user_id,
+                    ChatMessageModel.session_id.in_(session_ids),
+                )
+                .order_by(ChatMessageModel.session_id, ChatMessageModel.sequence)
+            )
+        ).all()
+        grouped: dict[str, list[ChatMessageRecord]] = {item.id: [] for item in sessions}
+        for message in messages:
+            grouped[message.session_id].append(_message_record(message))
+        return [
+            ChatSessionDetailRecord(_session_record(item), tuple(grouped[item.id]))
+            for item in sessions
+        ]
 
     async def get(
         self, owner_user_id: str, session_id: str
@@ -136,7 +167,14 @@ class SqliteChatRepository:
                 ChatSessionModel.owner_user_id == owner_user_id,
                 ChatSessionModel.id == session_id,
             )
-            .values(title="新会话", updated_at=now)
+            .values(
+                title="新会话",
+                memory_summary=None,
+                compacted_message_count=0,
+                context_tokens=0,
+                last_compacted_at=None,
+                updated_at=now,
+            )
             .returning(ChatSessionModel.id)
         )
         if updated is None:
@@ -149,6 +187,77 @@ class SqliteChatRepository:
         )
         await self._session.flush()
         return await self.get(owner_user_id, session_id)
+
+    async def update_memory_mode(
+        self, owner_user_id: str, session_id: str, memory_mode: ChatMemoryMode
+    ) -> ChatSessionDetailRecord | None:
+        updated = await self._session.scalar(
+            update(ChatSessionModel)
+            .where(
+                ChatSessionModel.owner_user_id == owner_user_id,
+                ChatSessionModel.id == session_id,
+            )
+            .values(memory_mode=memory_mode)
+            .returning(ChatSessionModel.id)
+        )
+        if updated is None:
+            return None
+        await self._session.flush()
+        return await self.get(owner_user_id, session_id)
+
+    async def update_context_tokens(
+        self, owner_user_id: str, session_id: str, context_tokens: int
+    ) -> bool:
+        if context_tokens < 0:
+            raise ValueError("context_tokens 不得为负数")
+        updated = await self._session.scalar(
+            update(ChatSessionModel)
+            .where(
+                ChatSessionModel.owner_user_id == owner_user_id,
+                ChatSessionModel.id == session_id,
+            )
+            .values(context_tokens=context_tokens)
+            .returning(ChatSessionModel.id)
+        )
+        return updated is not None
+
+    async def commit_compaction(
+        self,
+        owner_user_id: str,
+        session_id: str,
+        *,
+        expected_compacted_message_count: int,
+        compacted_message_count: int,
+        memory_summary: str,
+        compacted_at: datetime,
+    ) -> bool:
+        if compacted_message_count <= expected_compacted_message_count:
+            raise ValueError("压缩高水位必须前进")
+        boundary_exists = await self._session.scalar(
+            select(ChatMessageModel.id).where(
+                ChatMessageModel.owner_user_id == owner_user_id,
+                ChatMessageModel.session_id == session_id,
+                ChatMessageModel.sequence == compacted_message_count,
+                ChatMessageModel.role == "assistant",
+            )
+        )
+        if boundary_exists is None:
+            return False
+        updated = await self._session.scalar(
+            update(ChatSessionModel)
+            .where(
+                ChatSessionModel.owner_user_id == owner_user_id,
+                ChatSessionModel.id == session_id,
+                ChatSessionModel.compacted_message_count == expected_compacted_message_count,
+            )
+            .values(
+                memory_summary=memory_summary,
+                compacted_message_count=compacted_message_count,
+                last_compacted_at=compacted_at,
+            )
+            .returning(ChatSessionModel.id)
+        )
+        return updated is not None
 
     async def delete(self, owner_user_id: str, session_id: str) -> bool:
         deleted = await self._session.scalar(
@@ -164,7 +273,16 @@ class SqliteChatRepository:
 
 def _session_record(model: ChatSessionModel) -> ChatSessionRecord:
     return ChatSessionRecord(
-        model.id, model.owner_user_id, model.title, model.created_at, model.updated_at
+        id=model.id,
+        owner_user_id=model.owner_user_id,
+        title=model.title,
+        memory_mode=cast(ChatMemoryMode, model.memory_mode),
+        memory_summary=model.memory_summary,
+        compacted_message_count=model.compacted_message_count,
+        context_tokens=model.context_tokens,
+        last_compacted_at=model.last_compacted_at,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
     )
 
 

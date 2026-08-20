@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AuthStatus } from "./stores/auth";
 import { createAppRouter, resolveSafeRedirect } from "./router";
+import KnowledgeView from "./views/KnowledgeView.vue";
 
 interface FakeAuth {
   status: AuthStatus;
@@ -59,5 +60,12 @@ describe("应用路由守卫", () => {
     expect(resolveSafeRedirect("//evil.example/steal")).toBe("/chat");
     expect(resolveSafeRedirect(["/chat"])).toBe("/chat");
     expect(resolveSafeRedirect(undefined)).toBe("/chat");
+  });
+
+  it("knowledge 路由渲染真实工作区而不是占位页", () => {
+    const router = createAppRouter(createAuth("authenticated"), createMemoryHistory());
+    const route = router.getRoutes().find((record) => record.name === "knowledge");
+
+    expect(route?.components?.default).toBe(KnowledgeView);
   });
 });

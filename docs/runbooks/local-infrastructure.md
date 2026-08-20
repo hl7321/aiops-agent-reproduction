@@ -1,6 +1,6 @@
 # 本地基础设施与 Milvus smoke
 
-> 真实 Milvus smoke 状态：**尚未执行**。2026-08-10 检查时 `127.0.0.1:19530` 端口可达，但 ignored 本地 JSON 中 `vectorStore.token` 仍为空；未绕过 typed 配置边界执行连接或初始化。自动化 fake client 测试通过不代表真实服务认证、schema 或检索通过。
+> 真实 Milvus smoke 状态：**已于 2026-08-17 执行通过**。typed ignored JSON 配置完成 connect、initialize 与 health；服务端版本为 `3.0-beta`，collection 为 `super_ai_chunks`。凭据未输出、未提交。
 
 ## 静态验证与启动
 
@@ -48,3 +48,5 @@ PY
 ```
 
 只有命令真实成功时才能把本页状态改为“已通过”，并记录日期、Milvus 服务版本和使用的 collectionName；不得记录 token。失败时保留错误类型并确认输出不包含凭据。
+
+2026-08-17 的 Compose 五服务均成功启动；Milvus、etcd、MinIO、Alertmanager 健康，Attu 随 Milvus 启动。P13 真实索引进一步验证了 1024 维 insert、scoped replace/delete 和强一致查询。

@@ -43,6 +43,18 @@
       "httpStatus": 404,
       "defaultMessage": "请求的资源不存在"
     },
+    "BUSINESS_MCP_TOOL_NAME_CONFLICT": {
+      "code": "BUSINESS_MCP_TOOL_NAME_CONFLICT",
+      "category": "business",
+      "httpStatus": 409,
+      "defaultMessage": "MCP 工具名称发生冲突"
+    },
+    "CHAT_CONTEXT_LIMIT_REACHED": {
+      "code": "CHAT_CONTEXT_LIMIT_REACHED",
+      "category": "business",
+      "httpStatus": 409,
+      "defaultMessage": "会话上下文已达到安全上限，请先手动压缩记忆"
+    },
     "VALIDATION_REQUEST_INVALID": {
       "code": "VALIDATION_REQUEST_INVALID",
       "category": "validation",
@@ -66,6 +78,18 @@
       "category": "system",
       "httpStatus": 500,
       "defaultMessage": "服务暂时不可用"
+    },
+    "SYSTEM_MODEL_CAPABILITY_MISSING": {
+      "code": "SYSTEM_MODEL_CAPABILITY_MISSING",
+      "category": "system",
+      "httpStatus": 500,
+      "defaultMessage": "当前模型缺少上下文窗口配置"
+    },
+    "SYSTEM_MCP_CONNECTION_FAILED": {
+      "code": "SYSTEM_MCP_CONNECTION_FAILED",
+      "category": "system",
+      "httpStatus": 502,
+      "defaultMessage": "MCP Server 连接失败"
     }
   },
   "openapi": {
@@ -137,6 +161,54 @@
         "security": ["BearerAuth"],
         "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
       },
+      "/chat/sessions/{id}/messages:stream": {
+        "method": "POST",
+        "operationId": "streamChatMessage",
+        "successData": "SseEventStream",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "VALIDATION_REQUEST_INVALID"]
+      },
+      "/chat/sessions/{id}/tool-call-audits": {
+        "method": "GET",
+        "operationId": "listAgentToolCallAudits",
+        "successData": "AgentToolCallAuditListData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/chat/sessions/{id}/memory": {
+        "method": "PUT",
+        "operationId": "updateChatMemory",
+        "successData": "ChatSessionDetailData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "VALIDATION_REQUEST_INVALID", "SYSTEM_MODEL_CAPABILITY_MISSING"]
+      },
+      "/chat/sessions/{id}/memory:compact": {
+        "method": "POST",
+        "operationId": "compactChatMemory",
+        "successData": "ChatSessionDetailData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "SYSTEM_MODEL_CAPABILITY_MISSING"]
+      },
+      "/chat/configuration": {
+        "method": "GET", "operationId": "getChatConfiguration", "successData": "ChatConfigurationData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/chat/prompts": {
+        "method": "POST", "operationId": "createChatPrompt", "successData": "ChatConfigurationData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "VALIDATION_REQUEST_INVALID"]
+      },
+      "/chat/prompts/{id}": {
+        "method": "PUT", "operationId": "updateChatPrompt", "successData": "ChatConfigurationData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "VALIDATION_REQUEST_INVALID"]
+      },
+      "/chat/skills": {
+        "method": "POST", "operationId": "uploadChatSkill", "successData": "ChatConfigurationData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_CONFLICT", "VALIDATION_REQUEST_INVALID"]
+      },
+      "/chat/skills/{id}": {
+        "method": "DELETE", "operationId": "deleteChatSkill", "successData": "ChatAssetDeleteData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
       "/background-jobs": {
         "method": "GET",
         "operationId": "listBackgroundJobs",
@@ -192,6 +264,18 @@
       "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry": {
         "method": "POST", "operationId": "retryDocumentIndexTask", "successData": "DocumentIndexTask",
         "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_RULE_VIOLATION"]
+      },
+      "/mcp/connections": {
+        "method": "GET", "operationId": "listMcpConnections", "successData": "McpConnectionListData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/mcp/connections/{id}": {
+        "method": "PUT", "operationId": "updateMcpConnection", "successData": "McpConnection",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_CONFLICT", "VALIDATION_REQUEST_INVALID"]
+      },
+      "/mcp/connections/{id}:check": {
+        "method": "POST", "operationId": "checkMcpConnection", "successData": "McpConnectionCheckResult",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "SYSTEM_MCP_CONNECTION_FAILED"]
       }
     },
     "knowledgeOperations": [
@@ -213,7 +297,27 @@
       {"path":"/chat/sessions/{id}","method":"GET","operationId":"getChatSession","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
       {"path":"/chat/sessions/{id}/messages","method":"POST","operationId":"appendChatMessage","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","VALIDATION_REQUEST_INVALID"]},
       {"path":"/chat/sessions/{id}/messages:clear","method":"POST","operationId":"clearChatMessages","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
-      {"path":"/chat/sessions/{id}","method":"DELETE","operationId":"deleteChatSession","successData":"ChatDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]}
+      {"path":"/chat/sessions/{id}","method":"DELETE","operationId":"deleteChatSession","successData":"ChatDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/chat/sessions/{id}/messages:stream","method":"POST","operationId":"streamChatMessage","successData":"SseEventStream","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","VALIDATION_REQUEST_INVALID","CHAT_CONTEXT_LIMIT_REACHED","SYSTEM_MODEL_CAPABILITY_MISSING"]},
+      {"path":"/chat/sessions/{id}/tool-call-audits","method":"GET","operationId":"listAgentToolCallAudits","successData":"AgentToolCallAuditListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/chat/sessions/{id}/memory","method":"PUT","operationId":"updateChatMemory","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","VALIDATION_REQUEST_INVALID","SYSTEM_MODEL_CAPABILITY_MISSING"]},
+      {"path":"/chat/sessions/{id}/memory:compact","method":"POST","operationId":"compactChatMemory","successData":"ChatSessionDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","SYSTEM_MODEL_CAPABILITY_MISSING"]}
+    ],
+    "chatConfigurationOperations": [
+      {"path":"/chat/configuration","method":"GET","operationId":"getChatConfiguration","successData":"ChatConfigurationData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/chat/configuration","method":"PUT","operationId":"updateChatConfiguration","successData":"ChatConfigurationData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/chat/prompts","method":"POST","operationId":"createChatPrompt","successData":"ChatConfigurationData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/chat/prompts/{id}","method":"PUT","operationId":"updateChatPrompt","successData":"ChatConfigurationData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/chat/prompts/{id}","method":"DELETE","operationId":"deleteChatPrompt","successData":"ChatAssetDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/chat/skills","method":"POST","operationId":"uploadChatSkill","successData":"ChatConfigurationData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/chat/skills/{id}","method":"DELETE","operationId":"deleteChatSkill","successData":"ChatAssetDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]}
+    ],
+    "mcpOperations": [
+      {"path":"/mcp/connections","method":"GET","operationId":"listMcpConnections","successData":"McpConnectionListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/mcp/connections","method":"POST","operationId":"createMcpConnection","successData":"McpConnection","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_CONFLICT","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/mcp/connections/{id}","method":"PUT","operationId":"updateMcpConnection","successData":"McpConnection","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/mcp/connections/{id}","method":"DELETE","operationId":"deleteMcpConnection","successData":"McpConnectionDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/mcp/connections/{id}:check","method":"POST","operationId":"checkMcpConnection","successData":"McpConnectionCheckResult","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID","SYSTEM_MCP_CONNECTION_FAILED"]}
     ]
   },
   "sse": {

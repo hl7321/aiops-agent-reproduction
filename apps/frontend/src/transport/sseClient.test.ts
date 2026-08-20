@@ -6,6 +6,7 @@ import { SseFrameParser, createSseClient } from "./sseClient";
 
 const toolEvent: ToolCallEvent = {
   id: "evt-tool",
+  sequence: 1,
   type: "tool.call",
   channel: "aiops",
   timestamp: "2026-08-07T12:00:00Z",
@@ -19,6 +20,7 @@ const toolEvent: ToolCallEvent = {
 
 const errorEvent: ErrorEvent = {
   id: "evt-error",
+  sequence: 2,
   type: "error",
   channel: "chat",
   timestamp: "2026-08-07T12:00:01Z",
@@ -53,9 +55,10 @@ describe("SseFrameParser", () => {
   it("合并同一 frame 中的多个 data 行", () => {
     const parser = new SseFrameParser();
 
-    expect(parser.push('data: {"id":"evt-complete",\ndata: "type":"complete","channel":"chat","timestamp":"2026-08-07T12:00:02Z","data":{"finishReason":"stop"}}\n\n'))
+    expect(parser.push('data: {"id":"evt-complete","sequence":3,\ndata: "type":"complete","channel":"chat","timestamp":"2026-08-07T12:00:02Z","data":{"finishReason":"stop"}}\n\n'))
       .toEqual([{
         id: "evt-complete",
+        sequence: 3,
         type: "complete",
         channel: "chat",
         timestamp: "2026-08-07T12:00:02Z",
@@ -66,8 +69,23 @@ describe("SseFrameParser", () => {
   it("拒绝未知的私有事件 type", () => {
     const parser = new SseFrameParser();
 
-    expect(() => parser.push('data: {"id":"evt-private","type":"private.delta","channel":"chat","timestamp":"now","data":{}}\n\n'))
+    expect(() => parser.push('data: {"id":"evt-private","sequence":1,"type":"private.delta","channel":"chat","timestamp":"now","data":{}}\n\n'))
       .toThrow("SSE data 不符合共享事件合同");
+  });
+
+  it("401 时执行受保护状态清理扩展点", async () => {
+    let cleaned = false;
+    const client = createSseClient({
+      onUnauthorized: () => { cleaned = true; },
+      fetcher: async () => new Response("unauthorized", { status: 401 }),
+    });
+
+    await expect(async () => {
+      for await (const _event of client.stream("/events")) {
+        throw new Error("401 不应产生事件");
+      }
+    }).rejects.toThrow("HTTP 401");
+    expect(cleaned).toBe(true);
   });
 });
 

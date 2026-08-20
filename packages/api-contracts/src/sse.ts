@@ -23,6 +23,7 @@ export type TaskLifecycle = "completed" | "failed" | "queued" | "running";
 
 export interface SseEventBase<TType extends SseEventType> {
   id: string;
+  sequence: number;
   type: TType;
   channel: SseChannel;
   timestamp: string;
@@ -124,6 +125,9 @@ type SseEventCandidate = SseEventBase<SseEventType> & { data: unknown };
 function hasBaseFields(value: unknown): value is SseEventCandidate {
   return isRecord(value)
     && typeof value.id === "string"
+    && typeof value.sequence === "number"
+    && Number.isInteger(value.sequence)
+    && value.sequence >= 1
     && typeof value.type === "string"
     && SSE_EVENT_TYPES.includes(value.type as SseEventType)
     && (value.channel === "chat" || value.channel === "aiops")

@@ -4,7 +4,11 @@
 
 持久化 foundation 已提供 SQLAlchemy 2 async runtime、Alembic migration、事务 scope、Repository Protocol、不可变 record 和 SQLite adapter 扩展边界。Alembic 是 schema 唯一权威；应用不会在导入或默认启动时连接数据库、自动迁移或调用 `metadata.create_all`。测试只使用 pytest 临时 SQLite 文件。
 
-当前已实现本地认证、owner-scoped 文档管理、durable 文档索引和供后续 Agent 组装的 `knowledge_retrieval` Tool。上传只保存文档；客户端必须显式创建索引任务，后台 worker 才会复用保存的 splitter 配置、Qwen embedding 与 tenant-safe Milvus adapter。Tool 使用当前用户成功索引的文档执行 BM25L + Milvus 并行召回、RRF 与真实 Qwen rerank；完整 RAG、知识页面、聊天、MCP 与 AIOps 尚未实现。
+当前已实现本地认证、owner-scoped 文档管理、durable 文档索引、混合检索 Tool、持久流式 Chat Agent，以及 owner-scoped MCP connection CRUD/check。Chat 每轮只装配当前用户 enabled 连接的真实 MCP tools；没有 enabled 连接时才可使用本地 JSON 中非空的 CLS 回退地址。工具发现失败和同名冲突显式失败，真实工具调用不自动重试，避免重复外部副作用。
+
+MCP 产品运行时使用 `langchain-mcp-adapters`，不包含假 profile、静态工具目录或假调用结果。自动化测试的 injected fake client 只验证边界，不代表官方 CLS MCP 已连通。完整 URL 会持久化并返回；禁止在 URL query 放置凭据。P26 才负责官方主机服务的启动与凭据细节。
+
+AIOps 产品流程和 P26 的官方 CLS MCP 启动/凭据指南尚未实现。
 
 当前还提供 Qwen/百炼模型 provider 基础：本地 JSON typed settings、延迟创建的 ChatOpenAI/OpenAIEmbeddings、独立 qwen3-vl-rerank HTTP adapter、embedding 十条分批和 readiness 脱敏。它不代表 Agent、聊天、RAG、知识库或真实百炼连通性已经实现；自动化测试只使用 fake transport，人工 smoke 尚未执行，步骤见 `docs/runbooks/qwen-provider-smoke.md`。
 

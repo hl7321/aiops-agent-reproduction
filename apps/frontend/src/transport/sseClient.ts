@@ -9,10 +9,21 @@ import type { TransportOptions } from "./transportOptions";
 
 export interface SseClientOptions extends TransportOptions {
   baseUrl?: string;
+  onUnauthorized?: () => void | Promise<void>;
 }
 
 export interface SseClient {
   stream(input: string, init?: RequestInit): AsyncIterable<SseEvent>;
+}
+
+export class SseClientError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`SSE 连接失败: HTTP ${status}`);
+    this.name = "SseClientError";
+    this.status = status;
+  }
 }
 
 const FRAME_SEPARATOR = /\r\n\r\n|\n\n|\r\r/u;
@@ -58,7 +69,10 @@ export function createSseClient(options: SseClientOptions = {}): SseClient {
       const headers = await buildTransportHeaders(init.headers, options, "text/event-stream");
       const response = await fetcher(resolveTransportUrl(baseUrl, input), { ...init, headers });
       if (!response.ok || response.body === null) {
-        throw new Error(`SSE 连接失败: HTTP ${response.status}`);
+        if (response.status === 401) {
+          await options.onUnauthorized?.();
+        }
+        throw new SseClientError(response.status);
       }
 
       const parser = new SseFrameParser();

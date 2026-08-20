@@ -13,6 +13,8 @@ from super_ai.api_contracts import (
 )
 
 REQUEST_ID_HEADER = "X-Request-ID"
+
+
 class AppError(Exception):
     """只能引用共享目录 code 的可安全返回应用错误。"""
 
@@ -30,11 +32,17 @@ class AppError(Exception):
         self.safe_message: str = message or definition.default_message
 
 
-def success_response(data: object, request_id: str, *, status_code: int = 200) -> JSONResponse:
+def success_response(
+    data: object,
+    request_id: str,
+    *,
+    status_code: int = 200,
+    exclude_none: bool = True,
+) -> JSONResponse:
     """构造成功 envelope。"""
     envelope = SuccessEnvelope[object](data=data, meta=RequestMeta(requestId=request_id))
     return JSONResponse(
-        content=envelope.model_dump(mode="json", by_alias=True, exclude_none=True),
+        content=envelope.model_dump(mode="json", by_alias=True, exclude_none=exclude_none),
         status_code=status_code,
         headers={REQUEST_ID_HEADER: request_id},
     )

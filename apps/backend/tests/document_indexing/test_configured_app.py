@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from super_ai.app import create_configured_app
+from super_ai.knowledge.dependencies import get_knowledge_service
 
 
 def _write(path: Path, value: object) -> Path:
@@ -51,3 +52,4 @@ def test_configured_app_uses_only_explicit_json_and_remains_network_lazy(tmp_pat
     app = create_configured_app(project, user)
 
     assert app.title == "智能 OnCall Agent"
+    assert get_knowledge_service in app.dependency_overrides

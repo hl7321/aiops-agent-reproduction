@@ -22,7 +22,7 @@ try {
       frontend: { title: "Sentinel build", apiBaseUrl: "/api" },
       analytics: { publicKey: "public-analytics" },
       llm: { apiKey: sentinel },
-      cls: { secretKey: sentinel },
+      clsMcpServer: { baseUrl: sentinel, secretId: sentinel, secretKey: sentinel },
       mcp: { apiKey: sentinel },
       minio: { password: sentinel },
     }),

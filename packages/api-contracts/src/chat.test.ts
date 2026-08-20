@@ -3,15 +3,20 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import manifest from "../contract-manifest.json";
 import { CHAT_OPENAPI_OPERATIONS, OPENAPI_PATHS } from "./index";
 import type {
+  AgentToolCallAudit,
+  AgentToolCallAuditListData,
   AppendChatMessageRequest,
   ChatDeleteData,
   ChatMessage,
   ChatMessageMetadata,
   ChatMessageRole,
+  ChatMemoryMode,
   ChatReference,
   ChatSession,
   ChatSessionDetailData,
   ChatSessionListData,
+  ChatStreamMessageRequest,
+  UpdateChatMemoryRequest,
 } from "./index";
 
 describe("聊天会话共享合同", () => {
@@ -40,6 +45,14 @@ describe("聊天会话共享合同", () => {
     const session: ChatSession = {
       id: "session-1",
       title: "新会话",
+      memoryMode: "context_70_percent",
+      memorySummary: null,
+      contextTokens: 140,
+      contextWindowTokens: 1000,
+      contextUsagePercent: 14,
+      compactedMessageCount: 0,
+      lastCompactedAt: null,
+      canCompact: true,
       createdAt: "2026-08-17T00:00:00Z",
       updatedAt: "2026-08-17T00:00:00Z",
     };
@@ -54,9 +67,47 @@ describe("聊天会话共享合同", () => {
     expect(append.content).toBe("你好");
     expect(deleted).toEqual({ deleted: true, sessionId: "session-1" });
     expectTypeOf(message.sequence).toEqualTypeOf<number>();
+    expect(session.contextUsagePercent).toBe(14);
   });
 
-  it("登记六种受保护聊天操作和 append 验证错误", () => {
+  it("表达三种记忆模式与更新请求", () => {
+    const modes: readonly ChatMemoryMode[] = [
+      "every_30_turns", "context_70_percent", "manual",
+    ];
+    const request: UpdateChatMemoryRequest = { memoryMode: "manual" };
+
+    expect(modes).toEqual(["every_30_turns", "context_70_percent", "manual"]);
+    expect(request).toEqual({ memoryMode: "manual" });
+  });
+
+  it("表达只允许 user 内容的流请求和排他父对象审计", () => {
+    const streamRequest: ChatStreamMessageRequest = {
+      content: "请检查订单服务告警",
+      metadata: { toolCallIds: [] },
+    };
+    const audit: AgentToolCallAudit = {
+      id: "audit-1",
+      toolCallId: "call-1",
+      chatSessionId: "session-1",
+      diagnosticTaskId: null,
+      toolName: "knowledge_retrieval",
+      arguments: { query: "订单服务" },
+      status: "completed",
+      resultSummary: "返回 1 条引用",
+      errorMessage: null,
+      startedAt: "2026-08-17T00:00:00Z",
+      completedAt: "2026-08-17T00:00:01Z",
+      durationMs: 1000,
+    };
+    const list: AgentToolCallAuditListData = { items: [audit] };
+
+    expect(streamRequest).not.toHaveProperty("role");
+    expect(list.items[0]).toEqual(audit);
+    expect(audit.chatSessionId === null).not.toBe(audit.diagnosticTaskId === null);
+    expect(audit).not.toHaveProperty("parentCallId");
+  });
+
+  it("登记十种受保护聊天操作和记忆错误", () => {
     expect(CHAT_OPENAPI_OPERATIONS).toEqual(manifest.openapi.chatOperations);
     expect(CHAT_OPENAPI_OPERATIONS.map((operation) => operation.operationId)).toEqual([
       "createChatSession",
@@ -65,6 +116,10 @@ describe("聊天会话共享合同", () => {
       "appendChatMessage",
       "clearChatMessages",
       "deleteChatSession",
+      "streamChatMessage",
+      "listAgentToolCallAudits",
+      "updateChatMemory",
+      "compactChatMemory",
     ]);
 
     for (const operation of CHAT_OPENAPI_OPERATIONS) {
@@ -74,6 +129,16 @@ describe("聊天会话共享合同", () => {
     }
     expect(CHAT_OPENAPI_OPERATIONS.find((item) => item.operationId === "appendChatMessage")?.errors)
       .toContain("VALIDATION_REQUEST_INVALID");
+    expect(CHAT_OPENAPI_OPERATIONS.find((item) => item.operationId === "streamChatMessage")?.errors)
+      .toContain("VALIDATION_REQUEST_INVALID");
+    expect(OPENAPI_PATHS["/chat/sessions/{id}/messages:stream"].successData)
+      .toBe("SseEventStream");
+    expect(OPENAPI_PATHS["/chat/sessions/{id}/tool-call-audits"].successData)
+      .toBe("AgentToolCallAuditListData");
+    expect(OPENAPI_PATHS["/chat/sessions/{id}/memory"].method).toBe("PUT");
+    expect(OPENAPI_PATHS["/chat/sessions/{id}/memory:compact"].method).toBe("POST");
+    expect(CHAT_OPENAPI_OPERATIONS.find((item) => item.operationId === "streamChatMessage")?.errors)
+      .toContain("CHAT_CONTEXT_LIMIT_REACHED");
     expect(OPENAPI_PATHS["/chat/sessions"].operationId).toBe("createChatSession");
   });
 });

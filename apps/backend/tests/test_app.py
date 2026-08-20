@@ -31,3 +31,20 @@ def test_health_openapi_path_matches_shared_contract() -> None:
     operation = create_app().openapi()["paths"]["/health"]["get"]
 
     assert operation["operationId"] == "getHealth"
+
+
+async def test_local_frontend_cors_preflight_allows_document_delete() -> None:
+    transport = httpx.ASGITransport(app=create_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.options(
+            "/knowledge-bases/kb-1/documents/doc-1",
+            headers={
+                "Origin": "http://127.0.0.1:5173",
+                "Access-Control-Request-Method": "DELETE",
+                "Access-Control-Request-Headers": "authorization,x-request-id",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == "http://127.0.0.1:5173"
+    assert "DELETE" in response.headers["Access-Control-Allow-Methods"]

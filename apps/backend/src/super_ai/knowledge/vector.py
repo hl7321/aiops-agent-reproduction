@@ -17,4 +17,5 @@ class MilvusDocumentVectorDeleter:
             owner_user_id=scope.owner_user_id,
             allowed_knowledge_base_ids=(knowledge_base_id,),
         )
+        await self._vector_store.initialize()
         await self._vector_store.delete_document(vector_scope, knowledge_base_id, document_id)

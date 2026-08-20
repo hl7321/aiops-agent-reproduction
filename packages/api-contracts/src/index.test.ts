@@ -96,10 +96,14 @@ describe("HTTP 合同", () => {
       "BUSINESS_RULE_VIOLATION",
       "BUSINESS_CONFLICT",
       "BUSINESS_RESOURCE_NOT_FOUND",
+      "BUSINESS_MCP_TOOL_NAME_CONFLICT",
+      "CHAT_CONTEXT_LIMIT_REACHED",
       "VALIDATION_REQUEST_INVALID",
       "SYSTEM_ROUTE_NOT_FOUND",
       "SYSTEM_METHOD_NOT_ALLOWED",
       "SYSTEM_INTERNAL_ERROR",
+      "SYSTEM_MODEL_CAPABILITY_MISSING",
+      "SYSTEM_MCP_CONNECTION_FAILED",
     ]);
     expect(ERROR_DEFINITIONS.AUTH_REQUIRED).toEqual({
       code: "AUTH_REQUIRED",
@@ -154,6 +158,15 @@ describe("HTTP 合同", () => {
       "/chat/sessions/{id}",
       "/chat/sessions/{id}/messages",
       "/chat/sessions/{id}/messages:clear",
+      "/chat/sessions/{id}/messages:stream",
+      "/chat/sessions/{id}/tool-call-audits",
+      "/chat/sessions/{id}/memory",
+      "/chat/sessions/{id}/memory:compact",
+      "/chat/configuration",
+      "/chat/prompts",
+      "/chat/prompts/{id}",
+      "/chat/skills",
+      "/chat/skills/{id}",
       "/background-jobs",
       "/background-jobs/{id}",
       "/background-jobs/{id}:cancel",
@@ -165,6 +178,9 @@ describe("HTTP 合同", () => {
       "/knowledge-bases/{kb}/documents/{document}/index-tasks",
       "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}",
       "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry",
+      "/mcp/connections",
+      "/mcp/connections/{id}",
+      "/mcp/connections/{id}:check",
     ]);
     expect(OPENAPI_PATHS["/auth/register"]).toEqual({
       method: "POST",
@@ -350,6 +366,7 @@ describe("SSE 合同", () => {
   it("tool.call 支持稳定 lifecycle 和公共字段", () => {
     const event: ToolCallEvent = {
       id: "evt-tool",
+      sequence: 1,
       type: "tool.call",
       channel: "aiops",
       timestamp: "2026-08-07T12:00:00Z",
@@ -373,6 +390,7 @@ describe("SSE 合同", () => {
     };
     const event: ErrorEvent = {
       id: "evt-error",
+      sequence: 2,
       type: "error",
       channel: "chat",
       timestamp: "2026-08-07T12:00:01Z",

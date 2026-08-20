@@ -6,14 +6,20 @@ import pytest
 from pydantic import TypeAdapter
 
 from super_ai.api_contracts import (
+    CHAT_SKILL_UPLOAD_POLICY,
     ERROR_DEFINITIONS,
     KNOWLEDGE_UPLOAD_POLICY,
     SSE_EVENT_TYPES,
     TOOL_CALL_LIFECYCLES,
+    AgentToolCallAudit,
     ApiErrorModel,
     AuthUser,
     BackgroundJob,
     BackgroundJobEvent,
+    ChatConfigurationData,
+    ChatPrompt,
+    ChatSession,
+    ChatSkill,
     ErrorEvent,
     LoginData,
     LogoutData,
@@ -38,6 +44,15 @@ def test_python_catalogs_match_contract_manifest() -> None:
     )
     assert list(SSE_EVENT_TYPES) == sse["eventTypes"]
     assert list(TOOL_CALL_LIFECYCLES) == sse["toolCallLifecycles"]
+    assert CHAT_SKILL_UPLOAD_POLICY == {
+        "multipart": {"file": "file"},
+        "filename": "SKILL.md",
+        "maxBytes": 262144,
+        "maxNameCharacters": 64,
+        "maxDescriptionCharacters": 500,
+        "maxSummaryCharacters": 240,
+        "normalizedNamePattern": r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    }
 
 
 def test_auth_models_and_openapi_manifest_match_contracts() -> None:
@@ -62,6 +77,15 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         "/chat/sessions/{id}",
         "/chat/sessions/{id}/messages",
         "/chat/sessions/{id}/messages:clear",
+        "/chat/sessions/{id}/messages:stream",
+        "/chat/sessions/{id}/tool-call-audits",
+        "/chat/sessions/{id}/memory",
+        "/chat/sessions/{id}/memory:compact",
+        "/chat/configuration",
+        "/chat/prompts",
+        "/chat/prompts/{id}",
+        "/chat/skills",
+        "/chat/skills/{id}",
         "/background-jobs",
         "/background-jobs/{id}",
         "/background-jobs/{id}:cancel",
@@ -73,6 +97,9 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         "/knowledge-bases/{kb}/documents/{document}/index-tasks",
         "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}",
         "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry",
+        "/mcp/connections",
+        "/mcp/connections/{id}",
+        "/mcp/connections/{id}:check",
     }
 
     operations = cast(list[dict[str, str]], openapi["knowledgeOperations"])
@@ -86,6 +113,98 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
     for operation in cast(list[dict[str, str]], openapi["chatOperations"]):
         actual = schema["paths"][operation["path"]][operation["method"].lower()]
         assert actual["operationId"] == operation["operationId"]
+    for operation in cast(list[dict[str, str]], openapi["mcpOperations"]):
+        actual = schema["paths"][operation["path"]][operation["method"].lower()]
+        assert actual["operationId"] == operation["operationId"]
+        assert actual["security"] == [{"BearerAuth": []}]
+
+
+def test_chat_memory_contract_uses_capability_projection_and_shared_errors() -> None:
+    session = ChatSession.model_validate(
+        {
+            "id": "session-1",
+            "title": "新会话",
+            "memoryMode": "context_70_percent",
+            "memorySummary": None,
+            "contextTokens": 140,
+            "contextWindowTokens": 1000,
+            "contextUsagePercent": 14,
+            "compactedMessageCount": 0,
+            "lastCompactedAt": None,
+            "canCompact": True,
+            "createdAt": "2026-08-18T00:00:00Z",
+            "updatedAt": "2026-08-18T00:00:00Z",
+        }
+    )
+
+    assert session.model_dump(mode="json", by_alias=True)["memoryMode"] == "context_70_percent"
+    assert ERROR_DEFINITIONS["CHAT_CONTEXT_LIMIT_REACHED"].http_status == 409
+    assert ERROR_DEFINITIONS["SYSTEM_MODEL_CAPABILITY_MISSING"].http_status == 500
+
+
+def test_chat_configuration_models_and_seven_openapi_operations_align() -> None:
+    manifest = load_manifest()
+    openapi = cast(dict[str, object], manifest["openapi"])
+    operations = cast(list[dict[str, object]], openapi["chatConfigurationOperations"])
+    prompt = ChatPrompt(
+        id="prompt-1",
+        label="值班",
+        content="简洁回答",
+        createdAt="2026-08-18T00:00:00Z",
+        updatedAt="2026-08-18T00:00:00Z",
+    )
+    skill = ChatSkill(
+        id="skill-1",
+        name="knowledge-search",
+        description="检索知识",
+        content="BODY",
+        metadata={},
+        summary="检索知识",
+        createdAt="2026-08-18T00:00:00Z",
+        updatedAt="2026-08-18T00:00:00Z",
+    )
+    configuration = ChatConfigurationData(
+        prompts=[prompt],
+        skills=[skill],
+        selectedPromptId=None,
+        selectedSkillIds=[skill.id],
+    )
+    assert configuration.model_dump(mode="json", by_alias=True)["selectedPromptId"] is None
+    assert len(operations) == 7
+
+    schema = create_app().openapi()
+    for operation in operations:
+        path = cast(str, operation["path"])
+        method = cast(str, operation["method"]).lower()
+        actual = schema["paths"][path][method]
+        assert actual["operationId"] == operation["operationId"]
+        assert actual["security"] == [{"BearerAuth": []}]
+        assert {"401", "403", "404"}.issubset(actual["responses"])
+
+
+def test_agent_audit_contract_uses_exclusive_parent_and_camel_case_shape() -> None:
+    audit = AgentToolCallAudit.model_validate(
+        {
+            "id": "audit-1",
+            "toolCallId": "call-1",
+            "chatSessionId": "session-1",
+            "diagnosticTaskId": None,
+            "toolName": "knowledge_retrieval",
+            "arguments": {"query": "订单服务"},
+            "status": "completed",
+            "resultSummary": "返回 1 条引用",
+            "errorMessage": None,
+            "startedAt": "2026-08-17T00:00:00Z",
+            "completedAt": "2026-08-17T00:00:01Z",
+            "durationMs": 1000,
+        }
+    )
+
+    payload = audit.model_dump(mode="json", by_alias=True)
+    assert payload["toolCallId"] == "call-1"
+    assert payload["chatSessionId"] == "session-1"
+    assert payload["diagnosticTaskId"] is None
+    assert "parentCallId" not in payload
 
 
 def test_background_job_python_contracts_use_shared_camel_case_shape() -> None:
@@ -156,6 +275,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
     [
         {
             "id": "evt-content",
+            "sequence": 1,
             "type": "content.delta",
             "channel": "chat",
             "timestamp": "2026-08-07T12:00:00Z",
@@ -163,6 +283,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         },
         {
             "id": "evt-reasoning",
+            "sequence": 2,
             "type": "reasoning.delta",
             "channel": "chat",
             "timestamp": "2026-08-07T12:00:01Z",
@@ -170,6 +291,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         },
         {
             "id": "evt-tool",
+            "sequence": 3,
             "type": "tool.call",
             "channel": "aiops",
             "timestamp": "2026-08-07T12:00:02Z",
@@ -182,6 +304,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         },
         {
             "id": "evt-reference",
+            "sequence": 4,
             "type": "reference.source",
             "channel": "chat",
             "timestamp": "2026-08-07T12:00:03Z",
@@ -189,6 +312,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         },
         {
             "id": "evt-task",
+            "sequence": 5,
             "type": "task.status",
             "channel": "aiops",
             "timestamp": "2026-08-07T12:00:04Z",
@@ -196,6 +320,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         },
         {
             "id": "evt-report",
+            "sequence": 6,
             "type": "report",
             "channel": "aiops",
             "timestamp": "2026-08-07T12:00:05Z",
@@ -203,6 +328,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         },
         {
             "id": "evt-complete",
+            "sequence": 7,
             "type": "complete",
             "channel": "chat",
             "timestamp": "2026-08-07T12:00:06Z",
@@ -210,6 +336,7 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
         },
         {
             "id": "evt-error",
+            "sequence": 8,
             "type": "error",
             "channel": "chat",
             "timestamp": "2026-08-07T12:00:07Z",
@@ -235,6 +362,7 @@ def test_sse_error_reuses_http_error_model() -> None:
     event = ErrorEvent.model_validate(
         {
             "id": "evt-error",
+            "sequence": 1,
             "type": "error",
             "channel": "chat",
             "timestamp": "2026-08-07T12:00:07Z",

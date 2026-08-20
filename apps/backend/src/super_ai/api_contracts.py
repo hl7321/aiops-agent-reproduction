@@ -2,8 +2,12 @@
 
 from dataclasses import dataclass
 from typing import Annotated, Final, Generic, Literal, TypeAlias, TypeVar
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+
+LANGCHAIN_TEXT_BLOCK_TYPE: Final = "text"
+LANGCHAIN_ERROR_FIELD: Final = "error"
 
 ErrorCode: TypeAlias = Literal[
     "AUTH_REQUIRED",
@@ -13,10 +17,14 @@ ErrorCode: TypeAlias = Literal[
     "BUSINESS_RULE_VIOLATION",
     "BUSINESS_CONFLICT",
     "BUSINESS_RESOURCE_NOT_FOUND",
+    "BUSINESS_MCP_TOOL_NAME_CONFLICT",
+    "CHAT_CONTEXT_LIMIT_REACHED",
     "VALIDATION_REQUEST_INVALID",
     "SYSTEM_ROUTE_NOT_FOUND",
     "SYSTEM_METHOD_NOT_ALLOWED",
     "SYSTEM_INTERNAL_ERROR",
+    "SYSTEM_MODEL_CAPABILITY_MISSING",
+    "SYSTEM_MCP_CONNECTION_FAILED",
 ]
 ErrorCategory: TypeAlias = Literal[
     "authentication",
@@ -37,6 +45,7 @@ SseEventType: TypeAlias = Literal[
 ]
 SseChannel: TypeAlias = Literal["chat", "aiops"]
 ToolCallLifecycle: TypeAlias = Literal["started", "delta", "completed", "failed"]
+ChatMemoryMode: TypeAlias = Literal["every_30_turns", "context_70_percent", "manual"]
 TaskLifecycle: TypeAlias = Literal["queued", "running", "completed", "failed"]
 
 SSE_EVENT_TYPES: Final[tuple[SseEventType, ...]] = (
@@ -58,6 +67,15 @@ KNOWLEDGE_UPLOAD_POLICY: Final[dict[str, object]] = {
         "overwrite": "overwrite",
     },
     "strategies": ["fixed-character", "markdown-heading", "paragraph"],
+}
+CHAT_SKILL_UPLOAD_POLICY: Final[dict[str, object]] = {
+    "multipart": {"file": "file"},
+    "filename": "SKILL.md",
+    "maxBytes": 256 * 1024,
+    "maxNameCharacters": 64,
+    "maxDescriptionCharacters": 500,
+    "maxSummaryCharacters": 240,
+    "normalizedNamePattern": r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
 }
 TOOL_CALL_LIFECYCLES: Final[tuple[ToolCallLifecycle, ...]] = (
     "started",
@@ -129,6 +147,18 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         http_status=404,
         default_message="请求的资源不存在",
     ),
+    "BUSINESS_MCP_TOOL_NAME_CONFLICT": ErrorDefinition(
+        code="BUSINESS_MCP_TOOL_NAME_CONFLICT",
+        category="business",
+        http_status=409,
+        default_message="MCP 工具名称发生冲突",
+    ),
+    "CHAT_CONTEXT_LIMIT_REACHED": ErrorDefinition(
+        code="CHAT_CONTEXT_LIMIT_REACHED",
+        category="business",
+        http_status=409,
+        default_message="会话上下文已达到安全上限，请先手动压缩记忆",
+    ),
     "VALIDATION_REQUEST_INVALID": ErrorDefinition(
         code="VALIDATION_REQUEST_INVALID",
         category="validation",
@@ -152,6 +182,18 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         category="system",
         http_status=500,
         default_message="服务暂时不可用",
+    ),
+    "SYSTEM_MODEL_CAPABILITY_MISSING": ErrorDefinition(
+        code="SYSTEM_MODEL_CAPABILITY_MISSING",
+        category="system",
+        http_status=500,
+        default_message="当前模型缺少上下文窗口配置",
+    ),
+    "SYSTEM_MCP_CONNECTION_FAILED": ErrorDefinition(
+        code="SYSTEM_MCP_CONNECTION_FAILED",
+        category="system",
+        http_status=502,
+        default_message="MCP Server 连接失败",
     ),
 }
 
@@ -228,6 +270,77 @@ class LogoutData(ContractModel):
     revoked: Literal[True] = True
 
 
+McpTransport: TypeAlias = Literal["sse", "streamable_http"]
+McpConnectionCheckStatus: TypeAlias = Literal["connected", "failed"]
+
+
+class McpDiscoveredTool(ContractModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class McpConnection(ContractModel):
+    id: str
+    name: str
+    transport: McpTransport
+    url: str
+    enabled: bool
+    timeout_seconds: int = Field(alias="timeoutSeconds", ge=1, le=300)
+    retries: int = Field(ge=0, le=5)
+    last_check: str | None = Field(alias="lastCheck")
+    last_error: str | None = Field(alias="lastError")
+    discovered_tools: list[McpDiscoveredTool] = Field(alias="discoveredTools")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class McpConnectionListData(ContractModel):
+    connections: list[McpConnection]
+
+
+class CreateMcpConnectionRequest(ContractModel):
+    name: str = Field(min_length=1, max_length=120)
+    transport: McpTransport
+    url: str = Field(min_length=1, max_length=4096)
+    enabled: bool = True
+    timeout_seconds: int = Field(default=30, alias="timeoutSeconds", ge=1, le=300)
+    retries: int = Field(default=1, ge=0, le=5)
+
+    @field_validator("name", "url")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不得为空")
+        return normalized
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("MCP URL 必须是具有 host 的 HTTP/HTTPS URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("MCP URL 不允许包含 userinfo")
+        return value
+
+
+class UpdateMcpConnectionRequest(CreateMcpConnectionRequest):
+    pass
+
+
+class McpConnectionDeleteData(ContractModel):
+    deleted: Literal[True] = True
+    connection_id: str = Field(alias="connectionId")
+
+
+class McpConnectionCheckResult(ContractModel):
+    status: McpConnectionCheckStatus
+    connection: McpConnection
+    tools: list[McpDiscoveredTool]
+    error: str | None = None
+
+
 ChatMessageRole: TypeAlias = Literal["user", "assistant", "system", "tool"]
 
 
@@ -257,6 +370,46 @@ class AppendChatMessageRequest(ContractModel):
         return value
 
 
+class ChatStreamMessageRequest(ContractModel):
+    content: str = Field(min_length=1, max_length=100_000)
+    metadata: ChatMessageMetadata = Field(default_factory=ChatMessageMetadata)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content 不得为空")
+        return value
+
+
+AgentToolCallAuditStatus: TypeAlias = Literal["started", "completed", "failed"]
+
+
+class AgentToolCallAudit(ContractModel):
+    id: str
+    tool_call_id: str = Field(alias="toolCallId")
+    chat_session_id: str | None = Field(alias="chatSessionId")
+    diagnostic_task_id: str | None = Field(alias="diagnosticTaskId")
+    tool_name: str = Field(alias="toolName")
+    arguments: dict[str, JsonValue]
+    status: AgentToolCallAuditStatus
+    result_summary: str | None = Field(alias="resultSummary")
+    error_message: str | None = Field(alias="errorMessage")
+    started_at: str = Field(alias="startedAt")
+    completed_at: str | None = Field(alias="completedAt")
+    duration_ms: int | None = Field(alias="durationMs", ge=0)
+
+    @model_validator(mode="after")
+    def parent_must_be_exclusive(self) -> "AgentToolCallAudit":
+        if (self.chat_session_id is None) == (self.diagnostic_task_id is None):
+            raise ValueError("chatSessionId 与 diagnosticTaskId 必须恰好提供一个")
+        return self
+
+
+class AgentToolCallAuditListData(ContractModel):
+    items: list[AgentToolCallAudit]
+
+
 class ChatMessage(ContractModel):
     id: str
     session_id: str = Field(alias="sessionId")
@@ -270,6 +423,14 @@ class ChatMessage(ContractModel):
 class ChatSession(ContractModel):
     id: str
     title: str
+    memory_mode: ChatMemoryMode = Field(alias="memoryMode")
+    memory_summary: str | None = Field(alias="memorySummary")
+    context_tokens: int = Field(alias="contextTokens", ge=0)
+    context_window_tokens: int = Field(alias="contextWindowTokens", gt=0)
+    context_usage_percent: float = Field(alias="contextUsagePercent", ge=0)
+    compacted_message_count: int = Field(alias="compactedMessageCount", ge=0)
+    last_compacted_at: str | None = Field(alias="lastCompactedAt")
+    can_compact: bool = Field(alias="canCompact")
     created_at: str = Field(alias="createdAt")
     updated_at: str = Field(alias="updatedAt")
 
@@ -283,15 +444,71 @@ class ChatSessionDetailData(ContractModel):
     messages: list[ChatMessage]
 
 
+class UpdateChatMemoryRequest(ContractModel):
+    memory_mode: ChatMemoryMode = Field(alias="memoryMode")
+
+
 class ChatDeleteData(ContractModel):
     deleted: Literal[True] = True
     session_id: str = Field(alias="sessionId")
 
 
+class ChatPrompt(ContractModel):
+    id: str
+    label: str
+    content: str
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class ChatSkill(ContractModel):
+    id: str
+    name: str
+    description: str
+    filename: Literal["SKILL.md"] = "SKILL.md"
+    content: str
+    metadata: dict[str, JsonValue]
+    summary: str
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class ChatConfigurationData(ContractModel):
+    prompts: list[ChatPrompt]
+    skills: list[ChatSkill]
+    selected_prompt_id: str | None = Field(alias="selectedPromptId")
+    selected_skill_ids: list[str] = Field(alias="selectedSkillIds")
+
+
+class UpdateChatConfigurationRequest(ContractModel):
+    selected_prompt_id: str | None = Field(alias="selectedPromptId")
+    selected_skill_ids: list[str] = Field(alias="selectedSkillIds", max_length=100)
+
+
+class CreateChatPromptRequest(ContractModel):
+    label: str = Field(min_length=1, max_length=80)
+    content: str = Field(min_length=1, max_length=20_000)
+
+    @field_validator("label", "content")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("字段不得为空")
+        return normalized
+
+
+class UpdateChatPromptRequest(CreateChatPromptRequest):
+    pass
+
+
+class ChatAssetDeleteData(ContractModel):
+    deleted: Literal[True] = True
+    asset_id: str = Field(alias="assetId")
+
+
 BackgroundJobStatus: TypeAlias = Literal["queued", "running", "succeeded", "failed", "cancelled"]
-DocumentIndexStatus: TypeAlias = Literal[
-    "pending", "running", "succeeded", "failed", "cancelled"
-]
+DocumentIndexStatus: TypeAlias = Literal["pending", "running", "succeeded", "failed", "cancelled"]
 
 
 class BackgroundJob(ContractModel):
@@ -435,6 +652,7 @@ class KnowledgeRetrievalToolOutput(ContractModel):
 
 class SseEventBase(ContractModel):
     id: str
+    sequence: int = Field(ge=1)
     channel: SseChannel
     timestamp: str
 

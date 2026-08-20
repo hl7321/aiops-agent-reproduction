@@ -9,6 +9,7 @@ description = "智能 OnCall Agent 的最小 FastAPI 工程基础"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "PyYAML>=6,<7",
   "aiosqlite>=0.20,<1",
   "alembic>=1.14,<2",
   "fastapi>=0.115,<1",

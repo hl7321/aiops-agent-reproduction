@@ -1,6 +1,6 @@
 # Qwen Provider 人工 Smoke
 
-> 状态：**尚未执行**。本文件只记录有真实百炼凭据时的人工步骤；自动化 fake transport 测试通过不代表真实百炼连通性通过。
+> 状态：**已于 2026-08-17 执行通过**。ignored JSON 中的真实凭据未输出、未提交；自动化 fake transport 测试仍不能替代本记录。
 
 ## 前置条件
 
@@ -42,3 +42,10 @@ PY
 - chat 模型为本机配置值；embedding 模型为 text-embedding-v4；rerank 模型为 qwen3-vl-rerank。
 - 任一失败只记录已脱敏错误，不把失败改写为“通过”，也不生成 fallback 向量、排序或分数。
 - 执行人应在独立运维记录中写明日期、区域/workspace 和结果；不要把真实 key 或完整响应提交到 Git。
+
+## 2026-08-17 结果
+
+- chat：`qwen3.7-max` readiness 成功。
+- embedding：`text-embedding-v4` readiness 成功，P13 文档索引生成 1024 维向量。
+- rerank：`qwen3-vl-rerank` readiness 成功。
+- 三类结果只记录 provider、model、baseUrl 和 latency；检查过程中未输出 API key 或 Authorization header。

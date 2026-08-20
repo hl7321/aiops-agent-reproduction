@@ -57,6 +57,9 @@
   },
   "clsMcpServer": {
     "baseUrl": "",
+    "transport": "streamable_http",
+    "timeoutSeconds": 30,
+    "retries": 1,
     "secretId": "",
     "secretKey": ""
   },

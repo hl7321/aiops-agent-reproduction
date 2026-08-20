@@ -17,13 +17,24 @@ from super_ai.background_jobs.handlers import HandlerRegistry
 from super_ai.background_jobs.lifespan import HandlerFactory, create_application_lifespan
 from super_ai.background_jobs.router import router as background_jobs_router
 from super_ai.background_jobs.runtime import WorkerSettings
+from super_ai.chat.memory.summarizer import ChatMemorySummarizer
 from super_ai.chat.router import router as chat_router
+from super_ai.chat_configuration.router import router as chat_configuration_router
 from super_ai.document_indexing.factory import create_configured_document_index_handler_factory
 from super_ai.document_indexing.router import router as document_indexing_router
+from super_ai.knowledge.dependencies import (
+    create_knowledge_service_dependency,
+    get_knowledge_service,
+)
 from super_ai.knowledge.router import router as knowledge_router
+from super_ai.knowledge.vector import MilvusDocumentVectorDeleter
 from super_ai.llm.config import LlmSettings, load_llm_settings
+from super_ai.mcp_connections.gateway import McpToolGateway
+from super_ai.mcp_connections.router import router as mcp_router
+from super_ai.mcp_connections.settings import ClsMcpServerSettings, load_cls_mcp_server_settings
 from super_ai.memory.config import DatabaseSettings, load_database_settings
 from super_ai.request_id import get_request_id, request_id_middleware
+from super_ai.vector_store.adapter import MilvusVectorStore
 from super_ai.vector_store.config import VectorStoreSettings, load_vector_store_settings
 
 
@@ -101,6 +112,10 @@ def create_app(
     document_index_handler_factory: HandlerFactory | None = None,
     llm_settings: LlmSettings | None = None,
     vector_store_settings: VectorStoreSettings | None = None,
+    chat_memory_context_window_tokens: int | None = None,
+    chat_memory_summarizer: ChatMemorySummarizer | None = None,
+    mcp_gateway: McpToolGateway | None = None,
+    cls_mcp_server_settings: ClsMcpServerSettings | None = None,
 ) -> FastAPI:
     """创建无外部连接副作用的最小 FastAPI 应用。"""
     registry = background_job_registry or HandlerRegistry()
@@ -121,11 +136,22 @@ def create_app(
         else None
     )
     app = FastAPI(title="智能 OnCall Agent", lifespan=lifespan)
+    app.state.agent_llm_settings = llm_settings
+    app.state.agent_vector_store_settings = vector_store_settings
+    app.state.chat_memory_context_window_tokens = chat_memory_context_window_tokens
+    app.state.chat_memory_summarizer = chat_memory_summarizer
+    app.state.mcp_gateway = mcp_gateway
+    app.state.cls_mcp_server_settings = cls_mcp_server_settings or ClsMcpServerSettings()
+    if vector_store_settings is not None:
+        knowledge_vector_store = MilvusVectorStore(vector_store_settings)
+        app.dependency_overrides[get_knowledge_service] = create_knowledge_service_dependency(
+            MilvusDocumentVectorDeleter(knowledge_vector_store)
+        )
     app.middleware("http")(request_id_middleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173"],
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
     app.add_exception_handler(AppError, app_error_handler)
@@ -143,8 +169,10 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(background_jobs_router)
     app.include_router(chat_router)
+    app.include_router(chat_configuration_router)
     app.include_router(knowledge_router)
     app.include_router(document_indexing_router)
+    app.include_router(mcp_router)
     return app
 
 
@@ -154,4 +182,5 @@ def create_configured_app(project_path: Path, user_path: Path) -> FastAPI:
         load_database_settings(project_path, user_path),
         llm_settings=load_llm_settings(project_path, user_path),
         vector_store_settings=load_vector_store_settings(project_path, user_path),
+        cls_mcp_server_settings=load_cls_mcp_server_settings(project_path, user_path),
     )

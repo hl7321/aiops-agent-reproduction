@@ -95,8 +95,52 @@
 - **THEN** 前端清除当前会话、会话列表和消息等受保护内存状态，但不请求删除服务端业务数据
 
 ### Requirement: 本阶段不执行模型或流式 Agent
-本能力 SHALL 仅管理会话与消息生命周期。创建、读取、追加、清空或删除操作 MUST NOT 调用 LLM、Milvus、MCP，且 MUST NOT 用临时进程内任务替代后续流式 Agent。
+创建、读取、非流式追加、清空或删除操作 SHALL 仅管理会话与消息生命周期，MUST NOT 调用 LLM、Milvus、MCP 或启动 Agent。只有专用 `messages:stream` 操作 MAY 执行本 change 定义的 Agent；该执行 MUST NOT 使用临时进程内后台任务冒充 durable runtime。
 
-#### Scenario: 追加用户消息
+#### Scenario: 通过非流式接口追加用户消息
 - **WHEN** 用户通过非流式消息接口追加内容
 - **THEN** 系统只持久化该消息和会话状态，不生成模型回复或 SSE 事件
+
+#### Scenario: 通过专用流式接口追加用户消息
+- **WHEN** 用户通过 `messages:stream` 提交内容
+- **THEN** 系统按 Agent 流式规格执行本轮，而不改变其他会话操作的非模型语义
+
+### Requirement: 流式 Agent 复用服务端会话生命周期
+聊天会话 SHALL 在既有 owner-scoped 消息边界上支持流式 user turn。系统 MUST 在开始模型调用前持久化 user 消息，并仅在成功完成时保存一条完整 assistant 消息；assistant metadata MUST 保存且仅保存本轮 references 与 toolCallIds。
+
+#### Scenario: 成功流式对话后读取详情
+- **WHEN** owner 完成一轮流式 Agent 对话后重新读取会话详情
+- **THEN** 服务端按 sequence 返回已保存 user 与完整 assistant 消息，assistant metadata 与本轮工具和引用一致
+
+#### Scenario: 流式对话失败后读取详情
+- **WHEN** user 消息保存后 Agent 执行失败
+- **THEN** 详情保留 user 消息但不包含部分或空的 assistant 消息
+
+### Requirement: 前端聊天状态支持当前流式轮次
+前端 chat client/store SHALL 直接消费共享 stream 请求与 SSE union，维护当前轮正文、真实 reasoning、工具状态、references、完成或错误状态。开始新一轮、认证失效或 logout MUST 清除对应内存 live state，且 MUST NOT 写入 localStorage。
+
+#### Scenario: 第二轮开始
+- **WHEN** 第一轮存在引用且用户开始第二轮
+- **THEN** store 清空上一轮 live references/tool 状态，并只累计第二轮事件
+
+#### Scenario: 流式请求认证失效
+- **WHEN** stream 请求返回认证失效
+- **THEN** 前端执行统一受保护状态清理，不请求删除服务端聊天数据
+
+### Requirement: 聊天会话持久化记忆派生状态
+聊天会话 SHALL 在既有标题和时间戳之外持久化记忆模式、nullable 摘要、已压缩消息高水位、最近 context token 投影和 nullable 最后压缩时间。清空消息 MUST 同时把这些派生状态重置为默认模式以外的初始空状态；完整消息未被清空时，压缩操作 MUST NOT 删除或改写消息。
+
+#### Scenario: 清空已压缩会话
+- **WHEN** 当前 owner 清空一个已有摘要和压缩高水位的会话
+- **THEN** 消息为空、标题恢复“新会话”，摘要为空、高水位与 contextTokens 为 0、lastCompactedAt 为空，memoryMode 保持用户当前选择
+
+#### Scenario: 压缩后读取详情
+- **WHEN** 会话完成一次记忆压缩后重新读取详情
+- **THEN** session DTO 返回持久化记忆状态且 messages 仍包含全部原始历史
+
+### Requirement: 会话记忆写操作复用 owner-scoped Repository 边界
+Repository 的记忆模式更新、摘要条件写回和 token 投影更新方法 MUST 显式以 `owner_user_id` 为第一个业务参数，并在同一数据库语句中限定 owner 与 session id。领域服务 MUST 只接收不可变 record，不能接收 ORM model 或裸数据库 session。
+
+#### Scenario: 参数级 owner scope
+- **WHEN** Repository 合同测试构造缺少 owner_user_id 的记忆写调用
+- **THEN** 调用在参数边界失败，不能形成无 owner 的宽更新

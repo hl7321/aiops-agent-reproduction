@@ -69,11 +69,11 @@
 - **THEN** 其共享 path 合同先声明 `BearerAuth`、`AUTH_REQUIRED` 与 `AUTH_FORBIDDEN`，再实现后端路由
 
 ### Requirement: SSE 使用共享判别联合
-共享合同 SHALL 定义以 `type` 判别的 SSE 事件联合，事件公共字段 MUST 为 `id`、`type`、`channel` 和 `timestamp`，其中 channel 仅允许 `chat` 或 `aiops`。事件目录 MUST 包含 `content.delta`、`reasoning.delta`、`tool.call`、`reference.source`、`task.status`、`report`、`complete` 和 `error`。
+共享合同 SHALL 定义以 `type` 判别的 SSE 事件联合，事件公共字段 MUST 为 `id`、`type`、`channel`、`timestamp` 和单调递增的整数 `sequence`，其中 channel 仅允许 `chat` 或 `aiops`。事件目录 MUST 包含 `content.delta`、`reasoning.delta`、`tool.call`、`reference.source`、`task.status`、`report`、`complete` 和 `error`。
 
 #### Scenario: 枚举全部 SSE 事件
 - **WHEN** 合同测试遍历共享 SSE 事件目录
-- **THEN** 八种 type 均存在且每种事件都携带公共字段
+- **THEN** 八种 type 均存在且每种事件都携带公共字段与整数 sequence
 
 #### Scenario: 表达工具调用生命周期
 - **WHEN** SSE 发送 `tool.call` 事件
@@ -189,3 +189,81 @@
 #### Scenario: 前后端禁止私有聊天 payload
 - **WHEN** 仓库合同测试扫描聊天 transport、store 与后端响应模型
 - **THEN** 它们直接消费共享聊天合同或由跨语言合同测试证明一致，不存在另一套临时会话或消息结构
+
+### Requirement: 共享合同登记 Agent 流式聊天与工具审计
+共享合同 SHALL 定义 ChatStreamMessageRequest、AgentToolCallAudit、审计状态与审计列表 data，并在机器可读 OpenAPI 目录登记 `POST /chat/sessions/{sessionId}/messages:stream` 和 `GET /chat/sessions/{sessionId}/tool-call-audits`。两个 path MUST 使用 `BearerAuth` 并复用 401/403；stream 还 MUST 登记 validation 与共享 SSE response。
+
+#### Scenario: 合同消费者读取 stream path
+- **WHEN** 合同测试读取流式消息 operation
+- **THEN** 获得稳定 method、operationId、user content/metadata 请求、共享 SSE response、BearerAuth 和 401/403/validation 错误
+
+#### Scenario: 合同消费者读取审计 DTO 与 path
+- **WHEN** 合同测试读取会话工具审计 operation
+- **THEN** 获得稳定 audit 字段、状态、父对象二选一语义、列表 data、BearerAuth 和 401/403
+
+#### Scenario: 前端消费流式事件
+- **WHEN** chat transport 收到跨网络 chunk 的流式消息事件
+- **THEN** 它通过公共 SSE parser 与共享 event union 保留 id/sequence 并完成类型收窄，不复制私有事件联合
+
+### Requirement: 共享合同登记 Chat Prompt、Skill 与 configuration
+共享合同 SHALL 定义 ChatPrompt、ChatSkill、ChatConfiguration、Prompt create/update、configuration update、删除结果与 Skill multipart policy。机器可读 OpenAPI 目录 MUST 登记 `GET/PUT /chat/configuration`、`POST /chat/prompts`、`PUT/DELETE /chat/prompts/{id}`、`POST /chat/skills`、`DELETE /chat/skills/{id}` 七个 operation；全部使用 `BearerAuth` 并复用 401/403/404，创建或上传按需登记 validation 与 `BUSINESS_CONFLICT` 409。
+
+#### Scenario: 合同消费者读取 configuration DTO
+- **WHEN** 前端或后端读取共享配置合同
+- **THEN** 获得 prompts、skills、nullable selectedPromptId 与 selectedSkillIds 的稳定类型，以及 Prompt/Skill 的可编辑字段
+
+#### Scenario: 合同消费者读取 Skill 上传 policy
+- **WHEN** 客户端构建 Skill multipart 请求
+- **THEN** 获得严格 filename `SKILL.md`、file 字段、256 KiB 限制、name/description 边界和规范化约束
+
+#### Scenario: 合同消费者读取七个 operation
+- **WHEN** 合同测试遍历机器可读 path 目录
+- **THEN** 七个 operation 具有稳定 method、operationId、成功 DTO、BearerAuth 与共享错误列表
+
+#### Scenario: 前端不复制配置 payload
+- **WHEN** configuration client/store 发送选择或资产请求
+- **THEN** 它直接消费共享 DTO 与 multipart policy，不定义另一套私有 Prompt/Skill payload
+
+### Requirement: 共享合同定义会话记忆 DTO 与操作
+共享 contracts SHALL 定义 `every_30_turns|context_70_percent|manual` 记忆模式、Chat session 的记忆字段、更新模式请求，以及 `PUT /chat/sessions/{id}/memory` 和 `POST /chat/sessions/{id}/memory:compact` 两条 bearer-protected OpenAPI operation。后端 Pydantic 序列化、前端 TypeScript 类型和机器可读 manifest MUST 保持一致。
+
+#### Scenario: 合同读取会话记忆
+- **WHEN** contracts 测试构造带完整记忆字段的 ChatSession
+- **THEN** TypeScript、Pydantic 与 manifest 对字段名称、nullable 语义和模式目录一致
+
+#### Scenario: 两条记忆操作受保护
+- **WHEN** 检查机器可读 OpenAPI operation
+- **THEN** 两条 path 使用 bearer 并声明共享 401、403、validation 与安全系统错误
+
+### Requirement: 上下文上限使用稳定 HTTP 与 SSE 错误
+稳定错误目录 SHALL 增加 `CHAT_CONTEXT_LIMIT_REACHED`，category 为 `business`、HTTP status 为 409，并提供不包含 prompt、消息、摘要或模型凭据的安全默认消息。HTTP failure envelope 与 SSE `error` MUST 复用相同 `ApiErrorModel` 字段，不能复制私有错误 payload。
+
+#### Scenario: HTTP 上下文拒绝
+- **WHEN** 流式 endpoint 在响应开始前拒绝达到 95% 的候选消息
+- **THEN** failure envelope 返回 code、business category、409、安全 message 和 requestId
+
+#### Scenario: SSE 上下文错误
+- **WHEN** 已开始的流必须用上下文上限错误终止
+- **THEN** `error` event 的 error 对象与目录中的 code、category、httpStatus 和默认消息一致
+
+### Requirement: 模型 capability 缺失使用稳定配置错误
+稳定错误目录 SHALL 增加 `SYSTEM_MODEL_CAPABILITY_MISSING`，用于当前 chat model 缺失有效 `contextWindowTokens` 的情况。错误 MUST 在创建模型 client 前产生并保持凭据脱敏，HTTP 与 SSE MUST 复用同一结构。
+
+#### Scenario: 会话预算无法取得窗口
+- **WHEN** 当前模型没有 capability profile
+- **THEN** API 返回 `SYSTEM_MODEL_CAPABILITY_MISSING` 的安全系统错误，不使用猜测窗口继续执行
+
+### Requirement: 共享合同登记 MCP 连接与检查边界
+共享 contracts SHALL 定义 McpConnection、McpDiscoveredTool、McpConnectionCheckResult、create/update/delete 数据、`sse|streamable_http` transport 与 `connected|failed` check 状态。机器可读 OpenAPI 目录 MUST 登记 `GET/POST /mcp/connections`、`PUT/DELETE /mcp/connections/{id}` 与 `POST /mcp/connections/{id}:check` 五个 operation；全部使用 BearerAuth 并复用 401/403，create/update 声明 validation/conflict，check 声明安全 MCP 系统错误。TypeScript、Pydantic、manifest 和前端 transport MUST 对字段、nullable 语义与错误目录保持一致。
+
+#### Scenario: 合同消费者读取 MCP DTO
+- **WHEN** 前端或后端合同测试构造带最近检查和发现 tools 的连接
+- **THEN** transport、URL、范围字段、nullable 状态与 tool 快照形状在跨语言实现中一致
+
+#### Scenario: 五个 MCP operations 受保护
+- **WHEN** 合同测试遍历 MCP path 目录
+- **THEN** 每个 operation 具有稳定 method、operationId、成功 DTO、BearerAuth 和对应共享错误
+
+#### Scenario: MCP 失败使用稳定错误
+- **WHEN** Chat 装配因连接失败或 tool 同名冲突而终止
+- **THEN** HTTP/SSE 使用共享目录中的安全 code、category、httpStatus 与 message，不自造私有 MCP error payload

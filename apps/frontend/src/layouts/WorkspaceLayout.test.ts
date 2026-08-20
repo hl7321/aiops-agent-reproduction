@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import App from "../App.vue";
 import { createAppRouter } from "../router";
 import { useAuthStore } from "../stores/auth";
+import { useKnowledgeStore } from "../stores/knowledge";
+import { useMcpStore } from "../stores/mcp";
 
 async function mountWorkspace(path: string) {
   const pinia = createPinia();
@@ -15,6 +17,15 @@ async function mountWorkspace(path: string) {
   auth.status = "authenticated";
   auth.user = { id: "user-1", email: "user@example.com", createdAt: "2026-08-10T00:00:00Z" };
   vi.spyOn(auth, "initialize").mockResolvedValue(undefined);
+  if (path === "/knowledge") {
+    const knowledge = useKnowledgeStore(pinia);
+    knowledge.knowledgeBases = [{ id: "kb-1", name: "默认知识库", isDefault: true }];
+    knowledge.selectedKnowledgeBaseId = "kb-1";
+    vi.spyOn(knowledge, "initialize").mockResolvedValue(undefined);
+  }
+  if (path === "/mcp") {
+    vi.spyOn(useMcpStore(pinia), "initialize").mockResolvedValue(undefined);
+  }
   const router = createAppRouter(auth, createMemoryHistory());
   await router.push(path);
   await router.isReady();
@@ -36,17 +47,35 @@ describe("WorkspaceLayout", () => {
     wrapper.unmount();
   });
 
-  it.each([
-    ["/knowledge", "知识库"],
-    ["/aiops", "AIOps"],
-    ["/mcp", "MCP"],
-  ])("%s 不显示会话区域且明确为后续能力", async (path, title) => {
-    const { wrapper } = await mountWorkspace(path);
+  it("/knowledge 不显示会话区域且渲染真实工作区", async () => {
+    const { wrapper } = await mountWorkspace("/knowledge");
 
     expect(wrapper.find('[aria-label="会话区域"]').exists()).toBe(false);
-    expect(wrapper.get("h1").text()).toBe(title);
+    expect(wrapper.get("h1").text()).toBe("知识库");
+    expect(wrapper.text()).toContain("文档与索引");
+    expect(wrapper.text()).not.toContain("将在后续提案实现");
+    expect(wrapper.get('[data-route-canvas="knowledge"]')).toBeTruthy();
+    wrapper.unmount();
+  });
+
+  it("/aiops 不显示会话区域且明确为后续能力", async () => {
+    const { wrapper } = await mountWorkspace("/aiops");
+
+    expect(wrapper.find('[aria-label="会话区域"]').exists()).toBe(false);
+    expect(wrapper.get("h1").text()).toBe("AIOps");
     expect(wrapper.text()).toContain("将在后续提案实现");
     expect(wrapper.get("[data-route-canvas]")).toBeTruthy();
+    wrapper.unmount();
+  });
+
+  it("/mcp 不显示会话区域且渲染真实连接管理工作区", async () => {
+    const { wrapper } = await mountWorkspace("/mcp");
+
+    expect(wrapper.find('[aria-label="会话区域"]').exists()).toBe(false);
+    expect(wrapper.get("h1").text()).toBe("MCP");
+    expect(wrapper.text()).toContain("MCP Servers");
+    expect(wrapper.text()).not.toContain("将在后续提案实现");
+    expect(wrapper.get('[data-route-canvas="mcp"]')).toBeTruthy();
     wrapper.unmount();
   });
 });

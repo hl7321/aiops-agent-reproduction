@@ -48,4 +48,9 @@ def test_p05_adds_no_tenant_specific_migration_revision() -> None:
         "document_index_tasks",
         "chat_sessions",
         "chat_messages",
+        "agent_tool_call_audits",
+        "user_chat_configurations",
+        "user_chat_prompts",
+        "user_chat_skills",
+        "mcp_connections",
     }

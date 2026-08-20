@@ -20,9 +20,20 @@ import super_ai.background_jobs.handlers
 import super_ai.background_jobs.runtime
 import super_ai.chat
 import super_ai.chat.router
+import super_ai.chat_configuration.agent
+import super_ai.chat_configuration.assembly
+import super_ai.chat_configuration.parser
+import super_ai.chat_configuration.router
+import super_ai.chat_configuration.store
+import super_ai.chat_configuration.tools
 import super_ai.knowledge
 import super_ai.knowledge.chunking
 import super_ai.knowledge.files
+import super_ai.mcp_connections
+import super_ai.mcp_connections.gateway
+import super_ai.mcp_connections.router
+import super_ai.mcp_connections.settings
+import super_ai.mcp_connections.source
 import super_ai.document_indexing.dependencies
 import super_ai.document_indexing.factory
 import super_ai.document_indexing.handler
@@ -38,6 +49,9 @@ import super_ai.retrieval.service
 import super_ai.retrieval.tokenizer
 import super_ai.retrieval.tool
 import super_ai.project_config
+
+import sys
+assert "langchain_mcp_adapters.client" not in sys.modules
 """
 
     result = subprocess.run(

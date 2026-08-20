@@ -4,7 +4,9 @@ import { createRouter, createWebHistory } from "vue-router";
 import WorkspaceLayout from "./layouts/WorkspaceLayout.vue";
 import type { AuthStatus } from "./stores/auth";
 import ChatView from "./views/ChatView.vue";
+import KnowledgeView from "./views/KnowledgeView.vue";
 import LoginView from "./views/LoginView.vue";
+import McpView from "./views/McpView.vue";
 import PlaceholderView from "./views/PlaceholderView.vue";
 import RegisterView from "./views/RegisterView.vue";
 
@@ -53,8 +55,7 @@ export function createAppRouter(auth: RouterAuth, history: RouterHistory = creat
           {
             path: "knowledge",
             name: "knowledge",
-            component: PlaceholderView,
-            props: { capability: "知识库" },
+            component: KnowledgeView,
             meta: { title: "知识库" },
           },
           {
@@ -67,8 +68,7 @@ export function createAppRouter(auth: RouterAuth, history: RouterHistory = creat
           {
             path: "mcp",
             name: "mcp",
-            component: PlaceholderView,
-            props: { capability: "MCP" },
+            component: McpView,
             meta: { title: "MCP" },
           },
         ],

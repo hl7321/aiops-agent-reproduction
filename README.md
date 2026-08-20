@@ -1,6 +1,8 @@
 # 智能 OnCall Agent
 
-本仓库当前提供安全 monorepo 工程基础、SQLite Repository、本地用户认证、tenant 隔离、Qwen provider、只含五个依赖服务的本地 Compose，以及显式连接的 tenant-safe Milvus adapter 基础。完整认证页面、聊天、知识库、AIOps、Agent、RAG 与 MCP 产品能力尚未实现；真实百炼与 Milvus 凭据 smoke 均不属于默认自动化门禁。
+本仓库当前提供安全 monorepo 工程基础、SQLite Repository、本地用户认证与中文桌面工作台、tenant 隔离、知识文档/切分、持久索引任务、混合检索、持久流式 Chat Agent、Prompt/Skill/会话记忆，以及 owner-scoped MCP 连接管理、真实工具发现和 Chat 工具注入。Compose 仍只包含五个基础依赖服务；AIOps 与官方 CLS MCP Server 的启动/凭据流程尚未实现。
+
+MCP 连接完整 URL 会由服务端保存并返回，当前不支持自定义 headers。禁止把 token、secret、password 或其他凭据放入 URL query。官方 `cls-mcp-server` 必须在主机运行，不属于 Compose；详见 `docs/runbooks/real-mcp-smoke.md`。
 
 ## 安装
 

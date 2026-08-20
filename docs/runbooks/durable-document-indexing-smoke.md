@@ -11,4 +11,8 @@
 
 人工步骤：注册/登录，上传一个会产生 10 段以上的 Markdown；显式调用文档的 `POST .../index-tasks`；轮询索引 task 详情与通用 background job，确认领域状态到 `succeeded`；在 Attu 中按 tenantId、knowledgeBaseId、documentId 检查全部 chunks、1024 维向量和 metadata。随后再次创建任务，确认旧向量被 scoped 替换而不是追加重复记录。
 
-本 change 的自动化验收环境未使用真实凭据，也未启动或探测本机外部服务，因此真实 Qwen+Milvus smoke **未执行**，不声称真实连通性通过。
+## 2026-08-17 执行结果
+
+真实 Qwen+Milvus smoke **已通过**：桌面客户端分别上传 Markdown/PDF 并显式创建 durable index task，任务由 pending/running 到 `succeeded`；Markdown 手动重建再次成功。Milvus 抽查记录覆盖两个 documentId、3 个 chunk、1024 维向量、非空 tenant/KB/document scope，且 `tenantId == ownerUserId`。页面删除后强一致查询确认新建 Markdown/PDF documentId 均无残留；此前 wiring 缺口产生的 3 个精确 scope 也已清理，最终 `p13-smoke` 向量为 0。
+
+本次未使用假向量、fake provider 或进程内临时任务，也未把 SQLite 与 Milvus 描述为跨系统原子事务。真实凭据仅存在于 ignored JSON，未进入日志或 Git。

@@ -18,13 +18,16 @@ from super_ai.memory.sqlite.paths import ensure_sqlite_parent_directory
 
 configuration = context.config
 if configuration.config_file_name is not None:
-    fileConfig(configuration.config_file_name)
+    fileConfig(configuration.config_file_name, disable_existing_loggers=False)
 
 importlib.import_module("super_ai.memory.extended_sqlite.auth_models")
 importlib.import_module("super_ai.memory.extended_sqlite.background_job_models")
 importlib.import_module("super_ai.memory.extended_sqlite.knowledge_models")
 importlib.import_module("super_ai.memory.extended_sqlite.document_index_task_models")
 importlib.import_module("super_ai.memory.extended_sqlite.chat_models")
+importlib.import_module("super_ai.memory.extended_sqlite.agent_audit_models")
+importlib.import_module("super_ai.memory.extended_sqlite.chat_configuration_models")
+importlib.import_module("super_ai.memory.extended_sqlite.mcp_connection_models")
 target_metadata = Base.metadata
 
 

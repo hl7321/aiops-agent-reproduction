@@ -42,6 +42,11 @@ export const DOCUMENT_INDEX_OPENAPI_OPERATIONS =
   manifest.openapi.documentIndexOperations as readonly OpenApiOperation[];
 export const CHAT_OPENAPI_OPERATIONS =
   manifest.openapi.chatOperations as readonly OpenApiOperation[];
+export const CHAT_CONFIGURATION_OPENAPI_OPERATIONS =
+  manifest.openapi.chatConfigurationOperations as readonly OpenApiOperation[];
+export const MCP_OPENAPI_OPERATIONS =
+  manifest.openapi.mcpOperations as readonly OpenApiOperation[];
+export { CHAT_SKILL_UPLOAD_POLICY } from "./chat-configuration";
 
 export interface ProtectedPathPolicy {
   readonly security: OpenApiSecuritySchemeName;
