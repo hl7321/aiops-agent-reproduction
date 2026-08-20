@@ -25,6 +25,7 @@ ErrorCode: TypeAlias = Literal[
     "SYSTEM_INTERNAL_ERROR",
     "SYSTEM_MODEL_CAPABILITY_MISSING",
     "SYSTEM_MCP_CONNECTION_FAILED",
+    "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
 ]
 ErrorCategory: TypeAlias = Literal[
     "authentication",
@@ -195,6 +196,12 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         http_status=502,
         default_message="MCP Server 连接失败",
     ),
+    "SYSTEM_ALERT_SOURCES_UNAVAILABLE": ErrorDefinition(
+        code="SYSTEM_ALERT_SOURCES_UNAVAILABLE",
+        category="system",
+        http_status=503,
+        default_message="活跃告警来源暂时不可用",
+    ),
 }
 
 
@@ -233,6 +240,31 @@ class FailureEnvelope(ContractModel):
 
 class FoundationStatus(ContractModel):
     status: Literal["ok"] = "ok"
+
+
+AlertSourceType: TypeAlias = Literal["prometheus-v1", "alertmanager-v2"]
+ActiveAlertStatus: TypeAlias = Literal["pending", "firing", "suppressed", "unprocessed"]
+
+
+class AlertSource(ContractModel):
+    name: str
+    source_type: AlertSourceType = Field(alias="type")
+
+
+class ActiveAlert(ContractModel):
+    alert_name: str = Field(alias="alertName")
+    service: str | None
+    severity: str | None
+    status: ActiveAlertStatus
+    starts_at: str = Field(alias="startsAt")
+    labels: dict[str, str]
+    annotations: dict[str, str]
+    source: AlertSource
+    raw_context: dict[str, JsonValue] = Field(alias="rawContext")
+
+
+class ActiveAlertsData(ContractModel):
+    items: list[ActiveAlert]
 
 
 class AuthUser(ContractModel):

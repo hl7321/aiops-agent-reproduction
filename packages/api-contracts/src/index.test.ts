@@ -105,6 +105,7 @@ describe("HTTP 合同", () => {
       "SYSTEM_INTERNAL_ERROR",
       "SYSTEM_MODEL_CAPABILITY_MISSING",
       "SYSTEM_MCP_CONNECTION_FAILED",
+      "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
     ]);
     expect(ERROR_DEFINITIONS.AUTH_REQUIRED).toEqual({
       code: "AUTH_REQUIRED",
@@ -151,6 +152,7 @@ describe("HTTP 合同", () => {
   it("登记四个认证 path 并仅保护 logout 与 me", () => {
     expect(Object.keys(OPENAPI_PATHS)).toEqual([
       "/health",
+      "/aiops/alerts/active",
       "/auth/register",
       "/auth/login",
       "/auth/logout",

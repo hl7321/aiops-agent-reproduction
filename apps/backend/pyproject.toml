@@ -43,6 +43,7 @@ packages = ["src/super_ai"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests", "../../tests"]
+pythonpath = ["src", "../.."]
 
 [tool.ruff]
 line-length = 100
@@ -55,6 +56,12 @@ select = ["B", "E", "F", "I", "UP"]
 typeCheckingMode = "strict"
 pythonVersion = "3.10"
 include = ["src", "tests", "../../tests"]
+executionEnvironments = [
+  { root = "tests/scripts", extraPaths = ["../.."] },
+  { root = "src" },
+  { root = "tests" },
+  { root = "../../tests" },
+]
 stubPath = "typings"
 venvPath = "."
 venv = ".venv"

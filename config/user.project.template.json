@@ -64,13 +64,19 @@
     "secretKey": ""
   },
   "prometheusAlerts": {
-    "baseUrl": "",
-    "username": "",
-    "password": ""
+    "sources": [
+      {
+        "name": "local-alertmanager",
+        "type": "alertmanager-v2",
+        "baseUrl": "http://127.0.0.1:9093",
+        "timeoutSeconds": 10
+      }
+    ]
   },
   "clsLogUpload": {
     "endpoint": "",
     "region": "",
+    "logsetId": "",
     "topicId": "",
     "secretId": "",
     "secretKey": ""

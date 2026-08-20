@@ -90,6 +90,12 @@
       "category": "system",
       "httpStatus": 502,
       "defaultMessage": "MCP Server 连接失败"
+    },
+    "SYSTEM_ALERT_SOURCES_UNAVAILABLE": {
+      "code": "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
+      "category": "system",
+      "httpStatus": 503,
+      "defaultMessage": "活跃告警来源暂时不可用"
     }
   },
   "openapi": {
@@ -108,6 +114,13 @@
         "method": "GET",
         "operationId": "getHealth",
         "successData": "FoundationStatus"
+      },
+      "/aiops/alerts/active": {
+        "method": "GET",
+        "operationId": "getActiveAlerts",
+        "successData": "ActiveAlertsData",
+        "security": ["BearerAuth"],
+        "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "SYSTEM_ALERT_SOURCES_UNAVAILABLE"]
       },
       "/auth/register": {
         "method": "POST",
@@ -278,6 +291,9 @@
         "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "SYSTEM_MCP_CONNECTION_FAILED"]
       }
     },
+    "alertOperations": [
+      {"path":"/aiops/alerts/active","method":"GET","operationId":"getActiveAlerts","successData":"ActiveAlertsData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","SYSTEM_ALERT_SOURCES_UNAVAILABLE"]}
+    ],
     "knowledgeOperations": [
       {"path":"/knowledge-bases","method":"GET","operationId":"listKnowledgeBases","successData":"KnowledgeBaseListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
       {"path":"/knowledge-bases/{kb}/documents","method":"GET","operationId":"listKnowledgeDocuments","successData":"KnowledgeDocumentListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},

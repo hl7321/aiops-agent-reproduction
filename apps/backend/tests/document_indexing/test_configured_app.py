@@ -45,6 +45,16 @@ def test_configured_app_uses_only_explicit_json_and_remains_network_lazy(tmp_pat
                 "token": "token",
                 "collectionName": "chunks",
             },
+            "prometheusAlerts": {
+                "sources": [
+                    {
+                        "name": "local-alertmanager",
+                        "type": "alertmanager-v2",
+                        "baseUrl": "http://127.0.0.1:9093",
+                        "timeoutSeconds": 10,
+                    }
+                ]
+            },
         },
     )
     user = _write(tmp_path / "user.project.json", {})
@@ -53,3 +63,4 @@ def test_configured_app_uses_only_explicit_json_and_remains_network_lazy(tmp_pat
 
     assert app.title == "智能 OnCall Agent"
     assert get_knowledge_service in app.dependency_overrides
+    assert app.state.alert_settings.sources[0].name == "local-alertmanager"

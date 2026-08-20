@@ -69,6 +69,7 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
     assert openapi["securitySchemes"] == {"BearerAuth": {"type": "http", "scheme": "bearer"}}
     assert set(paths) == {
         "/health",
+        "/aiops/alerts/active",
         "/auth/register",
         "/auth/login",
         "/auth/logout",
@@ -114,6 +115,10 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         actual = schema["paths"][operation["path"]][operation["method"].lower()]
         assert actual["operationId"] == operation["operationId"]
     for operation in cast(list[dict[str, str]], openapi["mcpOperations"]):
+        actual = schema["paths"][operation["path"]][operation["method"].lower()]
+        assert actual["operationId"] == operation["operationId"]
+        assert actual["security"] == [{"BearerAuth": []}]
+    for operation in cast(list[dict[str, str]], openapi["alertOperations"]):
         actual = schema["paths"][operation["path"]][operation["method"].lower()]
         assert actual["operationId"] == operation["operationId"]
         assert actual["security"] == [{"BearerAuth": []}]

@@ -9,6 +9,8 @@ from pydantic import JsonValue
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
+from super_ai.alerts.router import router as alerts_router
+from super_ai.alerts.settings import PrometheusAlertsSettings, load_alert_settings
 from super_ai.api_contracts import ErrorCode, FoundationStatus, SuccessEnvelope
 from super_ai.api_responses import AppError, error_response, success_response
 from super_ai.auth.router import router as auth_router
@@ -116,6 +118,7 @@ def create_app(
     chat_memory_summarizer: ChatMemorySummarizer | None = None,
     mcp_gateway: McpToolGateway | None = None,
     cls_mcp_server_settings: ClsMcpServerSettings | None = None,
+    alert_settings: PrometheusAlertsSettings | None = None,
 ) -> FastAPI:
     """创建无外部连接副作用的最小 FastAPI 应用。"""
     registry = background_job_registry or HandlerRegistry()
@@ -142,6 +145,7 @@ def create_app(
     app.state.chat_memory_summarizer = chat_memory_summarizer
     app.state.mcp_gateway = mcp_gateway
     app.state.cls_mcp_server_settings = cls_mcp_server_settings or ClsMcpServerSettings()
+    app.state.alert_settings = alert_settings or PrometheusAlertsSettings()
     if vector_store_settings is not None:
         knowledge_vector_store = MilvusVectorStore(vector_store_settings)
         app.dependency_overrides[get_knowledge_service] = create_knowledge_service_dependency(
@@ -173,6 +177,7 @@ def create_app(
     app.include_router(knowledge_router)
     app.include_router(document_indexing_router)
     app.include_router(mcp_router)
+    app.include_router(alerts_router)
     return app
 
 
@@ -183,4 +188,5 @@ def create_configured_app(project_path: Path, user_path: Path) -> FastAPI:
         llm_settings=load_llm_settings(project_path, user_path),
         vector_store_settings=load_vector_store_settings(project_path, user_path),
         cls_mcp_server_settings=load_cls_mcp_server_settings(project_path, user_path),
+        alert_settings=load_alert_settings(project_path, user_path),
     )
