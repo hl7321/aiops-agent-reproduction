@@ -28,6 +28,15 @@ describe("聊天会话共享合同", () => {
       knowledgeBaseId: "kb-1",
       source: "runbook.md",
       excerpt: "处理步骤",
+      metadata: { heading: "处置" },
+      vectorRank: 1,
+      vectorScore: 0.91,
+      bm25Rank: null,
+      bm25Score: null,
+      rrfScore: 0.0164,
+      rerankRank: 1,
+      rerankScore: 0.97,
+      score: 0.97,
     };
     const metadata: ChatMessageMetadata = {
       references: [reference],

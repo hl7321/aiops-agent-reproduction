@@ -1,5 +1,6 @@
 import manifest from "../contract-manifest.json";
 
+import type { ChatReference } from "./chat";
 import { isApiError, isRecord } from "./http";
 import type { ApiError, JsonValue } from "./http";
 
@@ -51,11 +52,7 @@ export interface ToolCallEvent extends SseEventBase<"tool.call"> {
 
 export interface ReferenceSourceEvent extends SseEventBase<"reference.source"> {
   data: {
-    source: {
-      id: string;
-      title: string;
-      url?: string;
-    };
+    source: ChatReference;
   };
 }
 
@@ -104,9 +101,7 @@ export function isSseEvent(value: unknown): value is SseEvent {
         && typeof data.lifecycle === "string"
         && TOOL_CALL_LIFECYCLES.includes(data.lifecycle as ToolCallLifecycle);
     case "reference.source":
-      return isRecord(data.source)
-        && typeof data.source.id === "string"
-        && typeof data.source.title === "string";
+      return isChatReference(data.source);
     case "task.status":
       return typeof data.taskId === "string" && typeof data.status === "string";
     case "report":
@@ -118,6 +113,31 @@ export function isSseEvent(value: unknown): value is SseEvent {
     case "error":
       return isApiError(data.error);
   }
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isChatReference(value: unknown): value is ChatReference {
+  return isRecord(value)
+    && typeof value.chunkId === "string"
+    && typeof value.documentId === "string"
+    && typeof value.knowledgeBaseId === "string"
+    && typeof value.source === "string"
+    && typeof value.excerpt === "string"
+    && isRecord(value.metadata)
+    && isNullableNumber(value.vectorRank)
+    && isNullableNumber(value.vectorScore)
+    && isNullableNumber(value.bm25Rank)
+    && isNullableNumber(value.bm25Score)
+    && typeof value.rrfScore === "number"
+    && Number.isFinite(value.rrfScore)
+    && typeof value.rerankRank === "number"
+    && Number.isInteger(value.rerankRank)
+    && typeof value.rerankScore === "number"
+    && Number.isFinite(value.rerankScore)
+    && value.score === value.rerankScore;
 }
 
 type SseEventCandidate = SseEventBase<SseEventType> & { data: unknown };

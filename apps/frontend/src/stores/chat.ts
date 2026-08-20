@@ -3,6 +3,7 @@ import { ref } from "vue";
 
 import type {
   AppendChatMessageRequest,
+  AgentToolCallAudit,
   ChatStreamMessageRequest,
   ReferenceSourceEvent,
   ChatSession,
@@ -21,12 +22,14 @@ import { registerProtectedStoreCleanup } from "./protectedStoreRegistry";
 
 export interface ChatStoreDependencies {
   readonly client: ChatClient;
+  readonly sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export function createChatStore(dependencies: ChatStoreDependencies) {
   return defineStore("chat", () => {
     const sessions = ref<readonly ChatSession[]>([]);
     const selectedDetail = ref<ChatSessionDetailData | null>(null);
+    const toolAudits = ref<readonly AgentToolCallAudit[]>([]);
     const loading = ref(false);
     const errorMessage = ref<string | null>(null);
     const liveContent = ref("");
@@ -35,8 +38,22 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
     const liveReferences = ref<readonly ReferenceSourceEvent["data"]["source"][]>([]);
     const liveStatus = ref<"idle" | "streaming" | "complete" | "error">("idle");
     const liveErrorMessage = ref<string | null>(null);
+    const sleep = dependencies.sleep ?? delay;
+    let initializePromise: Promise<void> | undefined;
+    let ensureActivePromise: Promise<void> | undefined;
 
     async function initialize(): Promise<void> {
+      if (initializePromise !== undefined) return initializePromise;
+      initializePromise = loadSessions();
+      try {
+        await initializePromise;
+      } catch (error: unknown) {
+        initializePromise = undefined;
+        throw error;
+      }
+    }
+
+    async function loadSessions(): Promise<void> {
       loading.value = true;
       errorMessage.value = null;
       try {
@@ -51,10 +68,37 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
 
     async function createSession(): Promise<void> {
       applyDetail((await dependencies.client.createSession()).data);
+      toolAudits.value = [];
+      resetLive();
     }
 
     async function selectSession(id: string): Promise<void> {
-      applyDetail((await dependencies.client.getSession(id)).data);
+      const [detail, audits] = await Promise.all([
+        dependencies.client.getSession(id),
+        dependencies.client.listToolCallAudits(id),
+      ]);
+      applyDetail(detail.data);
+      toolAudits.value = audits.data.items;
+      resetLive();
+    }
+
+    async function ensureActiveSession(): Promise<void> {
+      if (ensureActivePromise !== undefined) return ensureActivePromise;
+      ensureActivePromise = ensureActiveSessionOnce();
+      try {
+        await ensureActivePromise;
+      } catch (error: unknown) {
+        ensureActivePromise = undefined;
+        throw error;
+      }
+    }
+
+    async function ensureActiveSessionOnce(): Promise<void> {
+      await initialize();
+      if (selectedDetail.value !== null) return;
+      const first = sessions.value[0];
+      if (first === undefined) await createSession();
+      else await selectSession(first.id);
     }
 
     async function appendMessage(body: AppendChatMessageRequest): Promise<void> {
@@ -69,18 +113,34 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
 
     async function updateMemoryMode(memoryMode: ChatMemoryMode): Promise<void> {
       const id = requireSelectedId();
-      applyDetail((await dependencies.client.updateMemory(id, { memoryMode })).data);
+      try {
+        applyDetail((await dependencies.client.updateMemory(id, { memoryMode })).data);
+      } catch (error: unknown) {
+        await refreshDetail(id);
+        throw error;
+      }
     }
 
     async function compactMemory(): Promise<void> {
       const id = requireSelectedId();
-      applyDetail((await dependencies.client.compactMemory(id)).data);
+      try {
+        applyDetail((await dependencies.client.compactMemory(id)).data);
+      } catch (error: unknown) {
+        await refreshDetail(id);
+        throw error;
+      }
     }
 
     async function deleteSession(id: string): Promise<void> {
       const deleted = await dependencies.client.deleteSession(id);
       sessions.value = sessions.value.filter((session) => session.id !== deleted.data.sessionId);
-      if (selectedDetail.value?.session.id === deleted.data.sessionId) selectedDetail.value = null;
+      if (selectedDetail.value?.session.id !== deleted.data.sessionId) return;
+      selectedDetail.value = null;
+      toolAudits.value = [];
+      resetLive();
+      const next = sessions.value[0];
+      if (next === undefined) await createSession();
+      else await selectSession(next.id);
     }
 
     async function streamMessage(body: ChatStreamMessageRequest): Promise<void> {
@@ -89,7 +149,12 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
       liveStatus.value = "streaming";
       try {
         for await (const event of dependencies.client.streamMessage(id, body)) {
-          if (event.type === "content.delta") liveContent.value += event.data.delta;
+          if (event.type === "content.delta") {
+            for (const character of event.data.delta) {
+              liveContent.value += character;
+              await sleep(28);
+            }
+          }
           else if (event.type === "reasoning.delta") liveReasoning.value += event.data.delta;
           else if (event.type === "tool.call") {
             liveToolCalls.value = { ...liveToolCalls.value, [event.data.toolCallId]: event.data };
@@ -103,7 +168,12 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
           }
         }
         if (liveStatus.value === "complete") {
-          applyDetail((await dependencies.client.getSession(id)).data);
+          const [detail, audits] = await Promise.all([
+            dependencies.client.getSession(id),
+            dependencies.client.listToolCallAudits(id),
+          ]);
+          applyDetail(detail.data);
+          toolAudits.value = audits.data.items;
         } else if (liveStatus.value === "streaming") {
           liveStatus.value = "error";
           liveErrorMessage.value = "流式响应未正常完成";
@@ -127,6 +197,10 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
       ];
     }
 
+    async function refreshDetail(id: string): Promise<void> {
+      applyDetail((await dependencies.client.getSession(id)).data);
+    }
+
     function requireSelectedId(): string {
       const id = selectedDetail.value?.session.id;
       if (id === undefined) throw new Error("尚未选择会话");
@@ -136,8 +210,11 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
     function reset(): void {
       sessions.value = [];
       selectedDetail.value = null;
+      toolAudits.value = [];
       loading.value = false;
       errorMessage.value = null;
+      initializePromise = undefined;
+      ensureActivePromise = undefined;
       resetLive();
     }
 
@@ -152,12 +229,16 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
 
     registerProtectedStoreCleanup(reset);
     return {
-      sessions, selectedDetail, loading, errorMessage,
+      sessions, selectedDetail, toolAudits, loading, errorMessage,
       liveContent, liveReasoning, liveToolCalls, liveReferences, liveStatus, liveErrorMessage,
-      initialize, createSession, selectSession, appendMessage, streamMessage,
+      initialize, ensureActiveSession, createSession, selectSession, appendMessage, streamMessage,
       clearMessages, updateMemoryMode, compactMemory, deleteSession, reset,
     };
   });
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds));
 }
 
 function messageFrom(error: unknown): string {

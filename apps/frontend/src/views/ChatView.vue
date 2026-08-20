@@ -1,15 +1,75 @@
 <script setup lang="ts">
-import { MessageSquareText } from "lucide-vue-next";
+import { computed, onMounted, ref } from "vue";
 
-import AppEmptyState from "../components/states/AppEmptyState.vue";
+import type { ChatMessage } from "@super-ai/api-contracts";
+
+import ChatComposer from "../components/chat/ChatComposer.vue";
+import ChatConfigurationSidebar from "../components/chat/ChatConfigurationSidebar.vue";
+import ChatMemoryControls from "../components/chat/ChatMemoryControls.vue";
+import ChatMessageBubble from "../components/chat/ChatMessageBubble.vue";
+import ChatCitationList from "../components/chat/ChatCitationList.vue";
+import ChatToolActivity from "../components/chat/ChatToolActivity.vue";
+import { useChatStore } from "../stores/chat";
+import { useChatConfigurationStore } from "../stores/chatConfiguration";
+
+const chat = useChatStore();
+const configuration = useChatConfigurationStore();
+const initializationError = ref<string | null>(null);
+const isStreaming = computed(() => chat.liveStatus === "streaming");
+const liveMessage = computed<ChatMessage>(() => ({
+  id: "live-assistant",
+  sessionId: chat.selectedDetail?.session.id ?? "live",
+  role: "assistant",
+  content: chat.liveContent,
+  sequence: Number.MAX_SAFE_INTEGER,
+  metadata: {},
+  createdAt: new Date().toISOString(),
+}));
+
+onMounted(async () => {
+  try {
+    await Promise.all([chat.ensureActiveSession(), configuration.initialize()]);
+  } catch (error: unknown) {
+    initializationError.value = error instanceof Error ? error.message : "Chat 工作区加载失败";
+  }
+});
+
+async function send(content: string): Promise<void> {
+  await chat.streamMessage({ content });
+}
 </script>
 
 <template>
-  <section class="route-placeholder" data-route-canvas="chat" aria-labelledby="chat-canvas-title">
-    <div class="route-placeholder__icon"><MessageSquareText :size="26" aria-hidden="true" /></div>
-    <p class="eyebrow">CHAT WORKSPACE</p>
-    <h2 id="chat-canvas-title">对话能力尚未接入</h2>
-    <p>当前已建立认证工作台与会话区域边界，真实 Chat 流程将在后续提案实现。</p>
-    <AppEmptyState title="暂无会话内容" description="完成后续 Chat 提案后，这里将显示真实对话。" />
+  <section class="chat-workspace" data-route-canvas="chat" aria-label="Chat 工作区">
+    <div class="chat-main">
+      <div class="chat-transcript" aria-label="会话消息" aria-live="polite">
+        <p v-if="initializationError" class="field-error" role="alert">{{ initializationError }}</p>
+        <ChatMessageBubble
+          v-for="message in chat.selectedDetail?.messages ?? []"
+          :key="message.id"
+          :message="message"
+          :audits="chat.toolAudits"
+        />
+        <div v-if="isStreaming || chat.liveStatus === 'error'" class="live-turn">
+          <ChatToolActivity
+            :reasoning="chat.liveReasoning"
+            :live-tool-calls="chat.liveToolCalls"
+            :audits="[]"
+          />
+          <ChatMessageBubble v-if="chat.liveContent" :message="liveMessage" />
+          <ChatCitationList :references="chat.liveReferences" />
+          <p v-if="chat.liveErrorMessage" class="field-error" role="alert">{{ chat.liveErrorMessage }}</p>
+        </div>
+      </div>
+      <div v-if="chat.selectedDetail" class="chat-compose-zone">
+        <ChatMemoryControls
+          :session="chat.selectedDetail.session"
+          :on-update="chat.updateMemoryMode"
+          :on-compact="chat.compactMemory"
+        />
+        <ChatComposer :disabled="isStreaming" :on-send="send" />
+      </div>
+    </div>
+    <ChatConfigurationSidebar />
   </section>
 </template>

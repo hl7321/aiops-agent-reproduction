@@ -108,7 +108,7 @@ class AgentEventMapper:
         return ReferenceSourceEvent(
             **self._context.event_fields(),
             data=ReferenceSourceData(
-                source=ReferenceSource(id=reference.chunk_id, title=reference.source)
+                source=ReferenceSource.model_validate(reference.model_dump(by_alias=True))
             ),
         )
 

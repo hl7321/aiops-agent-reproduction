@@ -165,9 +165,10 @@ async def append_chat_message(
     current_user: Annotated[CurrentUser, Depends(get_current_user)],
     memory: Annotated[ChatMemoryService, Depends(get_chat_memory_service)],
 ) -> JSONResponse:
+    metadata_json = body.metadata.model_dump(mode="json", by_alias=True)
     metadata = cast(
         dict[str, JsonValue],
-        body.metadata.model_dump(mode="json", by_alias=True, exclude_none=True),
+        {key: value for key, value in metadata_json.items() if value is not None},
     )
     return _success(
         _detail(
@@ -214,7 +215,7 @@ async def _encoded_stream(
     service: AgentChatStreamService, prepared: PreparedAgentTurn
 ) -> AsyncIterator[str]:
     async for event in service.stream(prepared):
-        payload = event.model_dump_json(by_alias=True, exclude_none=True)
+        payload = event.model_dump_json(by_alias=True)
         yield f"id: {event.id}\nevent: {event.type}\ndata: {payload}\n\n"
 
 

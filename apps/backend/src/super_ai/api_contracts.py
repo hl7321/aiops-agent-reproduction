@@ -349,7 +349,22 @@ class ChatReference(ContractModel):
     document_id: str = Field(alias="documentId", min_length=1)
     knowledge_base_id: str = Field(alias="knowledgeBaseId", min_length=1)
     source: str = Field(min_length=1)
-    excerpt: str | None = None
+    excerpt: str
+    metadata: dict[str, JsonValue]
+    vector_rank: int | None = Field(alias="vectorRank")
+    vector_score: float | None = Field(alias="vectorScore")
+    bm25_rank: int | None = Field(alias="bm25Rank")
+    bm25_score: float | None = Field(alias="bm25Score")
+    rrf_score: float = Field(alias="rrfScore")
+    rerank_rank: int = Field(alias="rerankRank")
+    rerank_score: float = Field(alias="rerankScore")
+    score: float
+
+    @model_validator(mode="after")
+    def score_matches_rerank_score(self) -> "ChatReference":
+        if self.score != self.rerank_score:
+            raise ValueError("score 必须等于 rerankScore")
+        return self
 
 
 class ChatMessageMetadata(ContractModel):
@@ -645,6 +660,12 @@ class KnowledgeRetrievalCitation(ContractModel):
     rerank_score: float = Field(alias="rerankScore")
     score: float
 
+    @model_validator(mode="after")
+    def score_matches_rerank_score(self) -> "KnowledgeRetrievalCitation":
+        if self.score != self.rerank_score:
+            raise ValueError("score 必须等于 rerankScore")
+        return self
+
 
 class KnowledgeRetrievalToolOutput(ContractModel):
     results: list[KnowledgeRetrievalCitation]
@@ -686,10 +707,8 @@ class ToolCallEvent(SseEventBase):
     data: ToolCallData
 
 
-class ReferenceSource(ContractModel):
-    id: str
-    title: str
-    url: str | None = None
+class ReferenceSource(ChatReference):
+    """SSE 引用与持久 Chat 引用完全同形。"""
 
 
 class ReferenceSourceData(ContractModel):

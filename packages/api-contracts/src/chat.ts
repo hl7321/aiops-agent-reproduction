@@ -1,13 +1,10 @@
+import type { KnowledgeRetrievalCitation } from "./knowledge-retrieval";
+
 export type ChatMessageRole = "user" | "assistant" | "system" | "tool";
 export type ChatMemoryMode = "every_30_turns" | "context_70_percent" | "manual";
 
-export interface ChatReference {
-  readonly chunkId: string;
-  readonly documentId: string;
-  readonly knowledgeBaseId: string;
-  readonly source: string;
-  readonly excerpt?: string;
-}
+/** Chat 持久化与 SSE 直接复用权威检索引用，禁止维护降级的临时结构。 */
+export type ChatReference = KnowledgeRetrievalCitation;
 
 export interface ChatMessageMetadata {
   readonly references?: readonly ChatReference[];

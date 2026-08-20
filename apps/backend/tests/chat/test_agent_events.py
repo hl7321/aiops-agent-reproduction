@@ -49,6 +49,15 @@ def test_mapper_emits_current_turn_reference_and_safe_error_without_complete() -
         knowledgeBaseId="kb-1",
         source="runbook.md",
         excerpt="处理步骤",
+        metadata={"heading": "处置"},
+        vectorRank=1,
+        vectorScore=0.91,
+        bm25Rank=None,
+        bm25Score=None,
+        rrfScore=0.0164,
+        rerankRank=1,
+        rerankScore=0.97,
+        score=0.97,
     )
 
     reference_event = mapper.reference(reference)
@@ -61,8 +70,10 @@ def test_mapper_emits_current_turn_reference_and_safe_error_without_complete() -
         )
     )
 
-    assert reference_event.data.source.id == "chunk-1"
-    assert reference_event.data.source.title == "runbook.md"
+    assert reference_event.data.source.chunk_id == "chunk-1"
+    assert reference_event.data.source.document_id == "doc-1"
+    assert reference_event.data.source.rerank_score == 0.97
+    assert reference_event.data.source.score == reference_event.data.source.rerank_score
     assert context.references == (reference,)
     assert error_event.data.error.code == "SYSTEM_INTERNAL_ERROR"
     with pytest.raises(RuntimeError, match="已经终结"):
@@ -79,6 +90,16 @@ def test_new_turn_does_not_inherit_previous_references_or_tool_calls() -> None:
             documentId="doc-1",
             knowledgeBaseId="kb-1",
             source="runbook.md",
+            excerpt="处理步骤",
+            metadata={},
+            vectorRank=1,
+            vectorScore=0.9,
+            bm25Rank=None,
+            bm25Score=None,
+            rrfScore=0.016,
+            rerankRank=1,
+            rerankScore=0.95,
+            score=0.95,
         )
     )
 

@@ -7,12 +7,12 @@ import {
   LogOut,
   MessageSquareText,
   PanelLeft,
-  Plus,
 } from "lucide-vue-next";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import AsyncStatusBadge from "../components/states/AsyncStatusBadge.vue";
+import ChatSessionSidebar from "../components/chat/ChatSessionSidebar.vue";
 import { useAuthStore } from "../stores/auth";
 import { useFeedbackStore } from "../stores/feedback";
 
@@ -60,22 +60,7 @@ async function logout(): Promise<void> {
       </div>
     </aside>
 
-    <aside v-if="showConversationPanel" class="conversation-panel" aria-label="会话区域">
-      <div class="conversation-panel__header">
-        <div>
-          <p class="eyebrow">CONVERSATIONS</p>
-          <h2>会话</h2>
-        </div>
-        <button class="icon-button" type="button" disabled aria-label="新建会话将在后续提案实现">
-          <Plus :size="18" aria-hidden="true" />
-        </button>
-      </div>
-      <div class="conversation-panel__empty">
-        <MessageSquareText :size="22" aria-hidden="true" />
-        <strong>暂无会话</strong>
-        <span>Chat 能力将在后续提案实现</span>
-      </div>
-    </aside>
+    <ChatSessionSidebar v-if="showConversationPanel" />
 
     <section class="workspace-content">
       <header class="workspace-topbar">

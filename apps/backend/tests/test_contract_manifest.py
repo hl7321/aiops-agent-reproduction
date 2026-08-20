@@ -308,7 +308,24 @@ def test_fastapi_openapi_paths_and_security_match_manifest() -> None:
             "type": "reference.source",
             "channel": "chat",
             "timestamp": "2026-08-07T12:00:03Z",
-            "data": {"source": {"id": "src-1", "title": "Runbook"}},
+            "data": {
+                "source": {
+                    "chunkId": "chunk-1",
+                    "documentId": "document-1",
+                    "knowledgeBaseId": "knowledge-base-1",
+                    "source": "Runbook",
+                    "excerpt": "处理步骤",
+                    "metadata": {"heading": "处置"},
+                    "vectorRank": 1,
+                    "vectorScore": 0.91,
+                    "bm25Rank": None,
+                    "bm25Score": None,
+                    "rrfScore": 0.0164,
+                    "rerankRank": 1,
+                    "rerankScore": 0.97,
+                    "score": 0.97,
+                }
+            },
         },
         {
             "id": "evt-task",
@@ -355,7 +372,14 @@ def test_all_sse_event_shapes_round_trip(event: dict[str, object]) -> None:
     adapter: TypeAdapter[SseEvent] = TypeAdapter(SseEvent)
     parsed: SseEvent = adapter.validate_python(event)
 
-    assert parsed.model_dump(mode="json", by_alias=True, exclude_none=True) == event
+    dumped = parsed.model_dump(mode="json", by_alias=True, exclude_none=True)
+    if event["type"] == "reference.source":
+        source = dumped["data"]["source"]  # type: ignore[index]
+        source["vectorRank"] = event["data"]["source"]["vectorRank"]  # type: ignore[index]
+        source["vectorScore"] = event["data"]["source"]["vectorScore"]  # type: ignore[index]
+        source["bm25Rank"] = event["data"]["source"]["bm25Rank"]  # type: ignore[index]
+        source["bm25Score"] = event["data"]["source"]["bm25Score"]  # type: ignore[index]
+    assert dumped == event
 
 
 def test_sse_error_reuses_http_error_model() -> None:

@@ -77,9 +77,10 @@ class AgentChatStreamService:
         session_id: str,
         body: ChatStreamMessageRequest,
     ) -> PreparedAgentTurn:
+        metadata_json = body.metadata.model_dump(mode="json", by_alias=True)
         metadata = cast(
             dict[str, JsonValue],
-            body.metadata.model_dump(mode="json", by_alias=True, exclude_none=True),
+            {key: value for key, value in metadata_json.items() if value is not None},
         )
         prepared = await self._memory_service.prepare_candidate(
             current_user.owner_user_id,
@@ -137,7 +138,7 @@ class AgentChatStreamService:
                 "references": [
                     cast(
                         JsonValue,
-                        reference.model_dump(mode="json", by_alias=True, exclude_none=True),
+                        reference.model_dump(mode="json", by_alias=True),
                     )
                     for reference in result.references
                 ],

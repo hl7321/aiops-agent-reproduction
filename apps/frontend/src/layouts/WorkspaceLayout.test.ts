@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import App from "../App.vue";
 import { createAppRouter } from "../router";
 import { useAuthStore } from "../stores/auth";
+import { useChatStore } from "../stores/chat";
+import { useChatConfigurationStore } from "../stores/chatConfiguration";
 import { useKnowledgeStore } from "../stores/knowledge";
 import { useMcpStore } from "../stores/mcp";
 
@@ -17,6 +19,19 @@ async function mountWorkspace(path: string) {
   auth.status = "authenticated";
   auth.user = { id: "user-1", email: "user@example.com", createdAt: "2026-08-10T00:00:00Z" };
   vi.spyOn(auth, "initialize").mockResolvedValue(undefined);
+  if (path === "/chat") {
+    const chat = useChatStore(pinia);
+    const session = {
+      id: "session-1", title: "真实会话", memoryMode: "manual" as const,
+      memorySummary: null, contextTokens: 0, contextWindowTokens: 1000,
+      contextUsagePercent: 0, compactedMessageCount: 0, lastCompactedAt: null,
+      canCompact: false, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:00Z",
+    };
+    chat.sessions = [session];
+    chat.selectedDetail = { session, messages: [] };
+    vi.spyOn(chat, "ensureActiveSession").mockResolvedValue(undefined);
+    vi.spyOn(useChatConfigurationStore(pinia), "initialize").mockResolvedValue(undefined);
+  }
   if (path === "/knowledge") {
     const knowledge = useKnowledgeStore(pinia);
     knowledge.knowledgeBases = [{ id: "kb-1", name: "默认知识库", isDefault: true }];
@@ -44,6 +59,9 @@ describe("WorkspaceLayout", () => {
     expect(wrapper.text()).toContain("user@example.com");
     expect(wrapper.text()).toContain("服务状态");
     expect(wrapper.get('[data-route-canvas="chat"]')).toBeTruthy();
+    expect(wrapper.text()).toContain("真实会话");
+    expect(wrapper.find(".conversation-panel__empty").exists()).toBe(false);
+    expect(wrapper.find(".chat-transcript .app-state").exists()).toBe(false);
     wrapper.unmount();
   });
 

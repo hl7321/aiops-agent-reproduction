@@ -83,11 +83,15 @@
 - **THEN** reload 仍可从服务端恢复完整 assistant，且系统不因断开删除消息
 
 ### Requirement: 每轮引用与历史上下文相互隔离
-系统 SHALL 为每轮创建新的 references 与 toolCallIds 集合，并在 reload 时只从对应 assistant message metadata 恢复。模型历史 MUST 由当前会话的可用摘要与压缩高水位之后的消息装配，MUST NOT 删除、改写服务端完整历史或回退为无摘要的最旧消息裁剪；当前候选 user 消息 MUST 只在 95% 安全检查通过后保存并进入本轮模型输入。
+系统 SHALL 为每轮创建新的完整 retrieval citations 与 toolCallIds 集合，并在 reload 时只从对应 assistant message metadata 恢复。实时 `reference.source` 与成功 assistant metadata MUST 对同一 citation 保留 chunk/document/knowledgeBase id、source/excerpt/metadata 和 vector/BM25/RRF/rerank 的原始 rank/score；nullable 分支命中语义不得改写。模型历史 MUST 由当前会话的可用摘要与压缩高水位之后的消息装配，MUST NOT 删除、改写服务端完整历史或回退为无摘要的最旧消息裁剪；当前候选 user 消息 MUST 只在 95% 安全检查通过后保存并进入本轮模型输入。
 
 #### Scenario: 连续两轮仅第一轮检索
 - **WHEN** 第一轮产生知识引用而第二轮未调用知识工具
-- **THEN** 第二轮 live state 与 assistant metadata 不包含第一轮引用或 toolCallIds
+- **THEN** 第二轮 live state 与 assistant metadata 不包含第一轮引用或 toolCallIds，第一轮 metadata 仍保留自身完整 citation
+
+#### Scenario: 实时引用与 reload 一致
+- **WHEN** 本轮 knowledge_retrieval 返回包含单分支 null rank 的 citation 并成功完成
+- **THEN** 实时 reference.source 与 reload 后对应 assistant metadata 的字段、null 和各阶段原始分数一致
 
 #### Scenario: 历史超过上下文预算
 - **WHEN** 会话存在历史摘要与压缩消息高水位

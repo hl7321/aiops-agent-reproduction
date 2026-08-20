@@ -60,14 +60,20 @@ async def test_chat_crud_title_metadata_clear_and_delete(chat_database_url: str)
                 "role": "user",
                 "content": "  这是\n第一条   用户消息" + "长" * 60,
                 "metadata": {
-                    "references": [{
-                        "chunkId": "chunk-1", "documentId": "doc-1",
-                        "knowledgeBaseId": "kb-1", "source": "runbook.md",
-                    }],
+                        "references": [{
+                            "chunkId": "chunk-1", "documentId": "doc-1",
+                            "knowledgeBaseId": "kb-1", "source": "runbook.md",
+                            "excerpt": "处理步骤", "metadata": {"heading": "处置"},
+                            "vectorRank": 1, "vectorScore": 0.91,
+                            "bm25Rank": None, "bm25Score": None,
+                            "rrfScore": 0.0164, "rerankRank": 1,
+                            "rerankScore": 0.97, "score": 0.97,
+                        }],
                     "toolCallIds": ["call-1"],
                 },
             },
         )
+        assert user.status_code == 200, user.json()
         later = await client.post(
             f"/chat/sessions/{session_id}/messages",
             headers=headers,

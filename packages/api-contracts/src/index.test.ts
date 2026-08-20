@@ -9,6 +9,7 @@ import {
   SSE_EVENT_TYPES,
   TOOL_CALL_LIFECYCLES,
   isApiEnvelope,
+  isSseEvent,
   KNOWLEDGE_OPENAPI_OPERATIONS,
   KNOWLEDGE_UPLOAD_POLICY,
   DOCUMENT_INDEX_OPENAPI_OPERATIONS,
@@ -379,6 +380,44 @@ describe("SSE 合同", () => {
 
     expect(event.data.lifecycle).toBe("started");
     expect(event.channel).toBe("aiops");
+  });
+
+  it("reference.source 复用完整检索引用且拒绝兼容分数漂移", () => {
+    const event = {
+      id: "evt-reference",
+      sequence: 2,
+      type: "reference.source",
+      channel: "chat",
+      timestamp: "2026-08-20T00:00:00Z",
+      data: {
+        source: {
+          chunkId: "chunk-1",
+          documentId: "document-1",
+          knowledgeBaseId: "knowledge-base-1",
+          source: "runbook.md",
+          excerpt: "先检查服务健康状态。",
+          metadata: { heading: "排障步骤" },
+          vectorRank: 1,
+          vectorScore: 0.91,
+          bm25Rank: null,
+          bm25Score: null,
+          rrfScore: 0.0164,
+          rerankRank: 1,
+          rerankScore: 0.97,
+          score: 0.97,
+        },
+      },
+    } as const;
+
+    expect(isSseEvent(event)).toBe(true);
+    expect(isSseEvent({
+      ...event,
+      data: { source: { ...event.data.source, score: 0.5 } },
+    })).toBe(false);
+    expect(isSseEvent({
+      ...event,
+      data: { source: { id: "chunk-1", title: "旧版临时引用" } },
+    })).toBe(false);
   });
 
   it("error 事件直接复用 HTTP ApiError", () => {

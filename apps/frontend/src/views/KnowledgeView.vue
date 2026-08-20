@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Database } from "lucide-vue-next";
 import { onBeforeUnmount, onMounted } from "vue";
+import { useRoute } from "vue-router";
 
 import type { ChunkingConfig } from "@super-ai/api-contracts";
 
@@ -14,15 +15,32 @@ import { useKnowledgeStore } from "../stores/knowledge";
 
 const store = useKnowledgeStore();
 const feedback = useFeedbackStore();
+const route = useRoute();
 
 onMounted(async () => {
   try {
     await store.initialize();
+    await openCitationTarget();
   } catch {
     // Store exposes the safe message through errorMessage.
   }
 });
 onBeforeUnmount(() => store.reset());
+
+async function openCitationTarget(): Promise<void> {
+  const knowledgeBaseId = typeof route.query.knowledgeBaseId === "string"
+    ? route.query.knowledgeBaseId
+    : null;
+  const documentId = typeof route.query.documentId === "string" ? route.query.documentId : null;
+  if (knowledgeBaseId === null || documentId === null) return;
+  if (!store.knowledgeBases.some((item) => item.id === knowledgeBaseId)) return;
+  if (store.selectedKnowledgeBaseId !== knowledgeBaseId) {
+    store.selectedKnowledgeBaseId = knowledgeBaseId;
+    await store.refreshDocuments();
+  }
+  if (!store.documents.some((item) => item.id === documentId)) return;
+  await Promise.all([store.loadDocument(documentId), store.loadPreview(documentId)]);
+}
 
 async function upload(file: File, config: ChunkingConfig): Promise<void> {
   try {

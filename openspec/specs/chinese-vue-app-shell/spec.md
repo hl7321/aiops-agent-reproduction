@@ -44,11 +44,11 @@
 - **THEN** 系统建立认证状态并导航到 `/chat`
 
 ### Requirement: 工作台提供稳定桌面布局边界
-受保护页面 MUST 使用 WorkspaceLayout，并提供左侧 rail 导航、账号与登出入口、顶栏页面标题、具有文字的服务状态和 edge-to-edge 路由画布。会话区域 MUST 只在 Chat 路由显示；其他业务路由 MUST 使用完整业务画布。`/knowledge` MUST 渲染连接真实后端 API 的知识库工作区，`/mcp` MUST 渲染以服务器为事实来源的 MCP 连接管理工作区；仍未实现的 AIOps 路由 MUST 保持明确占位。当前验收只面向桌面浏览器，不得新增移动专用抽屉、底部导航或替代流程。
+受保护页面 MUST 使用 WorkspaceLayout，并提供左侧 rail 导航、账号与登出入口、顶栏页面标题、具有文字的服务状态和 edge-to-edge 路由画布。会话区域 MUST 只在 Chat 路由显示；在 `/chat` 时该区域 MUST 连接真实 Chat store 并提供会话列表、新建、切换和删除，Chat 主画布 MUST NOT 再嵌套第二个历史侧栏。其他业务路由 MUST 使用完整业务画布。`/knowledge` MUST 渲染连接真实后端 API 的知识库工作区，`/mcp` MUST 渲染以服务器为事实来源的 MCP 连接管理工作区；仍未实现的 AIOps 路由 MUST 保持明确占位。当前验收只面向桌面浏览器，不得新增移动专用抽屉、底部导航或替代流程。
 
 #### Scenario: Chat 显示会话区域
 - **WHEN** 已认证用户进入 `/chat`
-- **THEN** 工作台同时显示 rail、会话区域和 Chat 路由画布
+- **THEN** 工作台同时显示 rail、服务端会话列表和 Chat 路由画布，且新建、切换和删除操作调用真实 Chat API
 
 #### Scenario: 非 Chat 页面使用完整画布
 - **WHEN** 已认证用户进入知识库、AIOps 或 MCP 路由

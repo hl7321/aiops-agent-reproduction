@@ -232,6 +232,15 @@ async def test_two_turns_keep_references_in_their_own_assistant_metadata(
         knowledgeBaseId="kb-1",
         source="runbook.md",
         excerpt="处理步骤",
+        metadata={"heading": "处置"},
+        vectorRank=1,
+        vectorScore=0.9,
+        bm25Rank=2,
+        bm25Score=1.2,
+        rrfScore=0.032,
+        rerankRank=1,
+        rerankScore=0.96,
+        score=0.96,
     )
     await upgrade_database(chat_database_url)
     runtime = PersistenceRuntime.start(DatabaseSettings(url=chat_database_url))
@@ -250,7 +259,7 @@ async def test_two_turns_keep_references_in_their_own_assistant_metadata(
         assert detail is not None
         assistants = [message for message in detail.messages if message.role == "assistant"]
         assert assistants[0].metadata["references"] == [
-            reference.model_dump(by_alias=True, exclude_none=True)
+            reference.model_dump(by_alias=True)
         ]
         assert assistants[0].metadata["toolCallIds"] == ["call-1"]
         assert assistants[1].metadata == {"references": [], "toolCallIds": []}
@@ -266,6 +275,16 @@ async def test_closing_stream_after_live_event_does_not_delete_completed_answer(
         documentId="doc-1",
         knowledgeBaseId="kb-1",
         source="runbook.md",
+        excerpt="处理步骤",
+        metadata={},
+        vectorRank=1,
+        vectorScore=0.9,
+        bm25Rank=None,
+        bm25Score=None,
+        rrfScore=0.016,
+        rerankRank=1,
+        rerankScore=0.95,
+        score=0.95,
     )
     await upgrade_database(chat_database_url)
     runtime = PersistenceRuntime.start(DatabaseSettings(url=chat_database_url))
