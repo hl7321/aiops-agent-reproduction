@@ -163,7 +163,7 @@ class AgentToolAuditService:
                 started.id,
                 error_message=str(error),
                 completed_at=completed_at,
-                api_key=api_key,
+                api_key=api_key or self._api_key,
             )
             logger.info(
                 "agent tool failed owner=%s parent=%s tool=%s call=%s duration_ms=%s "

@@ -1,6 +1,7 @@
 import manifest from "../contract-manifest.json";
 
 import type { ChatReference } from "./chat";
+import type { DiagnosticEvidenceReference } from "./aiops";
 import { isApiError, isRecord } from "./http";
 import type { ApiError, JsonValue } from "./http";
 
@@ -20,7 +21,14 @@ export type SseEventType =
 
 export type SseChannel = "aiops" | "chat";
 export type ToolCallLifecycle = "completed" | "delta" | "failed" | "started";
-export type TaskLifecycle = "completed" | "failed" | "queued" | "running";
+export type TaskLifecycle = "cancelled" | "failed" | "queued" | "running" | "succeeded";
+const TASK_LIFECYCLES: readonly TaskLifecycle[] = [
+  "cancelled",
+  "failed",
+  "queued",
+  "running",
+  "succeeded",
+];
 
 export interface SseEventBase<TType extends SseEventType> {
   id: string;
@@ -50,17 +58,28 @@ export interface ToolCallEvent extends SseEventBase<"tool.call"> {
   };
 }
 
-export interface ReferenceSourceEvent extends SseEventBase<"reference.source"> {
+export interface ChatReferenceSourceEvent extends SseEventBase<"reference.source"> {
+  channel: "chat";
   data: {
     source: ChatReference;
   };
 }
+
+export interface DiagnosticReferenceSourceEvent extends SseEventBase<"reference.source"> {
+  channel: "aiops";
+  data: {
+    source: DiagnosticEvidenceReference;
+  };
+}
+
+export type ReferenceSourceEvent = ChatReferenceSourceEvent | DiagnosticReferenceSourceEvent;
 
 export interface TaskStatusEvent extends SseEventBase<"task.status"> {
   data: {
     taskId: string;
     status: TaskLifecycle;
     message?: string;
+    progress?: number;
   };
 }
 
@@ -101,9 +120,15 @@ export function isSseEvent(value: unknown): value is SseEvent {
         && typeof data.lifecycle === "string"
         && TOOL_CALL_LIFECYCLES.includes(data.lifecycle as ToolCallLifecycle);
     case "reference.source":
-      return isChatReference(data.source);
+      return (value.channel === "chat" && isChatReference(data.source))
+        || (value.channel === "aiops" && isDiagnosticEvidenceReference(data.source));
     case "task.status":
-      return typeof data.taskId === "string" && typeof data.status === "string";
+      return typeof data.taskId === "string"
+        && typeof data.status === "string"
+        && TASK_LIFECYCLES.includes(data.status as TaskLifecycle)
+        && (data.message === undefined || typeof data.message === "string")
+        && (data.progress === undefined
+          || (typeof data.progress === "number" && data.progress >= 0 && data.progress <= 100));
     case "report":
       return "report" in data;
     case "complete":
@@ -138,6 +163,16 @@ function isChatReference(value: unknown): value is ChatReference {
     && typeof value.rerankScore === "number"
     && Number.isFinite(value.rerankScore)
     && value.score === value.rerankScore;
+}
+
+function isDiagnosticEvidenceReference(value: unknown): value is DiagnosticEvidenceReference {
+  return isRecord(value)
+    && typeof value.evidenceId === "string"
+    && ["alert", "knowledge", "log", "metric"].includes(String(value.kind))
+    && typeof value.source === "string"
+    && typeof value.title === "string"
+    && typeof value.excerpt === "string"
+    && isRecord(value.metadata);
 }
 
 type SseEventCandidate = SseEventBase<SseEventType> & { data: unknown };

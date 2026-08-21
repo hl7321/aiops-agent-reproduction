@@ -33,3 +33,7 @@ class AgentToolCallAuditRepository(Protocol):
     async def list_for_chat(
         self, owner_user_id: str, chat_session_id: str
     ) -> list[AgentToolCallAuditRecord]: ...
+
+    async def list_for_diagnostic(
+        self, owner_user_id: str, diagnostic_task_id: str
+    ) -> list[AgentToolCallAuditRecord]: ...

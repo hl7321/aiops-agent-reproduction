@@ -1,4 +1,5 @@
 export * from "./alerts";
+export * from "./aiops";
 export * from "./auth";
 export * from "./background-jobs";
 export * from "./chat";

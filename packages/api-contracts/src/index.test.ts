@@ -106,6 +106,7 @@ describe("HTTP 合同", () => {
       "SYSTEM_MODEL_CAPABILITY_MISSING",
       "SYSTEM_MCP_CONNECTION_FAILED",
       "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
+      "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
     ]);
     expect(ERROR_DEFINITIONS.AUTH_REQUIRED).toEqual({
       code: "AUTH_REQUIRED",
@@ -153,6 +154,10 @@ describe("HTTP 合同", () => {
     expect(Object.keys(OPENAPI_PATHS)).toEqual([
       "/health",
       "/aiops/alerts/active",
+      "/aiops/diagnostics",
+      "/aiops/diagnostics/{id}",
+      "/aiops/diagnostics/{id}/evidence-chain",
+      "/aiops/diagnostics/{id}:stream",
       "/auth/register",
       "/auth/login",
       "/auth/logout",

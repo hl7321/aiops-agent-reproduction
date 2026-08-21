@@ -9,7 +9,9 @@ from typing import Literal, TypeAlias
 from super_ai.project_config import JsonValue
 
 BackgroundJobStatus: TypeAlias = Literal["queued", "running", "succeeded", "failed", "cancelled"]
-BackgroundJobEventType: TypeAlias = BackgroundJobStatus
+BackgroundJobEventType: TypeAlias = Literal[
+    "queued", "running", "succeeded", "failed", "cancelled", "progress"
+]
 
 
 def _empty_payload() -> JsonValue:

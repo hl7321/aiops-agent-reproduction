@@ -26,6 +26,7 @@ ErrorCode: TypeAlias = Literal[
     "SYSTEM_MODEL_CAPABILITY_MISSING",
     "SYSTEM_MCP_CONNECTION_FAILED",
     "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
+    "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
 ]
 ErrorCategory: TypeAlias = Literal[
     "authentication",
@@ -47,7 +48,17 @@ SseEventType: TypeAlias = Literal[
 SseChannel: TypeAlias = Literal["chat", "aiops"]
 ToolCallLifecycle: TypeAlias = Literal["started", "delta", "completed", "failed"]
 ChatMemoryMode: TypeAlias = Literal["every_30_turns", "context_70_percent", "manual"]
-TaskLifecycle: TypeAlias = Literal["queued", "running", "completed", "failed"]
+TaskLifecycle: TypeAlias = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+DiagnosticReplanAction: TypeAlias = Literal["continue", "replan", "report"]
+
+SSE_TOOL_CALL_TYPE: Final[SseEventType] = "tool.call"
+SSE_REFERENCE_SOURCE_TYPE: Final[SseEventType] = "reference.source"
+SSE_TASK_STATUS_TYPE: Final[SseEventType] = "task.status"
+SSE_REPORT_TYPE: Final[SseEventType] = "report"
+SSE_COMPLETE_TYPE: Final[SseEventType] = "complete"
+SSE_ERROR_TYPE: Final[SseEventType] = "error"
+SSE_ERROR_DATA_KEY: Final = "error"
+SSE_FINISH_REASON_ERROR: Final = "error"
 
 SSE_EVENT_TYPES: Final[tuple[SseEventType, ...]] = (
     "content.delta",
@@ -201,6 +212,12 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         category="system",
         http_status=503,
         default_message="活跃告警来源暂时不可用",
+    ),
+    "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE": ErrorDefinition(
+        code="SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
+        category="system",
+        http_status=503,
+        default_message="当前没有可用的日志检索工具",
     ),
 }
 
@@ -594,6 +611,128 @@ class BackgroundJobListData(ContractModel):
     items: list[BackgroundJob]
 
 
+DiagnosticStatus: TypeAlias = Literal["accepted", "running", "succeeded", "failed", "cancelled"]
+DiagnosticStepStatus: TypeAlias = Literal["pending", "running", "succeeded", "failed", "cancelled"]
+DiagnosticEvidenceKind: TypeAlias = Literal["alert", "knowledge", "log", "metric"]
+DiagnosticReportGenerationMode: TypeAlias = Literal["model", "fallback"]
+
+
+class DiagnosticPlanStep(ContractModel):
+    position: int = Field(ge=0)
+    tool_name: str = Field(alias="toolName", min_length=1, max_length=128)
+    purpose: str = Field(min_length=1, max_length=500)
+    arguments: dict[str, JsonValue]
+
+
+class DiagnosticTask(ContractModel):
+    id: str
+    owner_user_id: str = Field(alias="ownerUserId")
+    status: DiagnosticStatus
+    query: str | None
+    alerts: list[ActiveAlert]
+    current_plan: list[DiagnosticPlanStep] = Field(alias="currentPlan")
+    plan_version: int = Field(alias="planVersion", ge=0)
+    replan_count: int = Field(alias="replanCount", ge=0)
+    failure_code: str | None = Field(alias="failureCode")
+    failure_reason: str | None = Field(alias="failureReason")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    started_at: str | None = Field(alias="startedAt")
+    completed_at: str | None = Field(alias="completedAt")
+
+
+class DiagnosticStep(ContractModel):
+    id: str
+    diagnostic_task_id: str = Field(alias="diagnosticTaskId")
+    plan_version: int = Field(alias="planVersion", ge=1)
+    position: int = Field(ge=0)
+    attempt: int = Field(ge=1)
+    tool_name: str = Field(alias="toolName")
+    arguments: dict[str, JsonValue]
+    status: DiagnosticStepStatus
+    result_summary: str | None = Field(alias="resultSummary")
+    error_message: str | None = Field(alias="errorMessage")
+    started_at: str | None = Field(alias="startedAt")
+    completed_at: str | None = Field(alias="completedAt")
+    created_at: str = Field(alias="createdAt")
+
+
+class DiagnosticEvidence(ContractModel):
+    id: str
+    diagnostic_task_id: str = Field(alias="diagnosticTaskId")
+    diagnostic_step_id: str | None = Field(alias="diagnosticStepId")
+    tool_call_id: str | None = Field(alias="toolCallId")
+    kind: DiagnosticEvidenceKind
+    source: str
+    title: str
+    summary: str
+    content: str
+    metadata: dict[str, JsonValue]
+    observed_at: str | None = Field(alias="observedAt")
+    created_at: str = Field(alias="createdAt")
+
+
+class DiagnosticEvidenceReference(ContractModel):
+    evidence_id: str = Field(alias="evidenceId")
+    kind: DiagnosticEvidenceKind
+    source: str
+    title: str
+    excerpt: str
+    metadata: dict[str, JsonValue]
+
+
+class DiagnosticReport(ContractModel):
+    id: str
+    diagnostic_task_id: str = Field(alias="diagnosticTaskId")
+    revision: int = Field(ge=1)
+    markdown: str
+    generation_mode: DiagnosticReportGenerationMode = Field(alias="generationMode")
+    uncertainty: bool
+    created_at: str = Field(alias="createdAt")
+
+
+class ReportEvidenceLink(ContractModel):
+    id: str
+    diagnostic_task_id: str = Field(alias="diagnosticTaskId")
+    report_id: str = Field(alias="reportId")
+    evidence_id: str = Field(alias="evidenceId")
+    claim_key: str = Field(alias="claimKey")
+    section: str
+    position: int = Field(ge=0)
+
+
+class CreateDiagnosticRequest(ContractModel):
+    alerts: list[ActiveAlert] = Field(min_length=1, max_length=20)
+    query: str | None = Field(default=None, max_length=4000)
+
+
+class DiagnosticStreamRequest(ContractModel):
+    after_sequence: int = Field(default=0, alias="afterSequence", ge=0)
+
+
+class DiagnosticCreateData(ContractModel):
+    task: DiagnosticTask
+    background_job: BackgroundJob = Field(alias="backgroundJob")
+
+
+class DiagnosticListData(ContractModel):
+    items: list[DiagnosticTask]
+
+
+class DiagnosticDetailData(ContractModel):
+    task: DiagnosticTask
+    background_job: BackgroundJob = Field(alias="backgroundJob")
+    steps: list[DiagnosticStep]
+    report: DiagnosticReport | None
+
+
+class DiagnosticEvidenceChainData(ContractModel):
+    task_id: str = Field(alias="taskId")
+    evidence: list[DiagnosticEvidence]
+    report_evidence_links: list[ReportEvidenceLink] = Field(alias="reportEvidenceLinks")
+    tool_audits: list[AgentToolCallAudit] = Field(alias="toolAudits")
+
+
 class DocumentIndexTaskModel(ContractModel):
     id: str
     knowledge_base_id: str = Field(alias="knowledgeBaseId")
@@ -752,10 +891,20 @@ class ReferenceSourceEvent(SseEventBase):
     data: ReferenceSourceData
 
 
+class DiagnosticReferenceSourceData(ContractModel):
+    source: DiagnosticEvidenceReference
+
+
+class DiagnosticReferenceSourceEvent(SseEventBase):
+    type: Literal["reference.source"] = "reference.source"
+    data: DiagnosticReferenceSourceData
+
+
 class TaskStatusData(ContractModel):
     task_id: str = Field(alias="taskId")
     status: TaskLifecycle
     message: str | None = None
+    progress: int | None = Field(default=None, ge=0, le=100)
 
 
 class TaskStatusEvent(SseEventBase):

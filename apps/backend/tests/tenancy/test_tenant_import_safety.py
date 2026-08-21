@@ -53,4 +53,10 @@ def test_p05_adds_no_tenant_specific_migration_revision() -> None:
         "user_chat_prompts",
         "user_chat_skills",
         "mcp_connections",
+        "diagnostic_tasks",
+        "diagnostic_steps",
+        "diagnostic_evidence",
+        "diagnostic_reports",
+        "report_evidence_links",
+        "graph_checkpoints",
     }

@@ -9,6 +9,8 @@ from pydantic import JsonValue
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
+from super_ai.aiops.factory import create_configured_aiops_handler_factory
+from super_ai.aiops.router import router as aiops_router
 from super_ai.alerts.router import router as alerts_router
 from super_ai.alerts.settings import PrometheusAlertsSettings, load_alert_settings
 from super_ai.api_contracts import ErrorCode, FoundationStatus, SuccessEnvelope
@@ -112,6 +114,7 @@ def create_app(
     background_job_registry: HandlerRegistry | None = None,
     worker_settings: WorkerSettings | None = None,
     document_index_handler_factory: HandlerFactory | None = None,
+    aiops_handler_factory: HandlerFactory | None = None,
     llm_settings: LlmSettings | None = None,
     vector_store_settings: VectorStoreSettings | None = None,
     chat_memory_context_window_tokens: int | None = None,
@@ -130,7 +133,20 @@ def create_app(
         else None
     )
     selected_factory = document_index_handler_factory or configured_factory
-    handler_factories = (selected_factory,) if selected_factory is not None else ()
+    configured_aiops_factory = (
+        create_configured_aiops_handler_factory(
+            llm_settings,
+            vector_store_settings,
+            cls_mcp_server_settings or ClsMcpServerSettings(),
+            mcp_gateway,
+        )
+        if llm_settings is not None and vector_store_settings is not None
+        else None
+    )
+    selected_aiops_factory = aiops_handler_factory or configured_aiops_factory
+    handler_factories = tuple(
+        factory for factory in (selected_factory, selected_aiops_factory) if factory is not None
+    )
     lifespan = (
         create_application_lifespan(
             database_settings, registry, worker_settings, handler_factories=handler_factories
@@ -178,6 +194,7 @@ def create_app(
     app.include_router(document_indexing_router)
     app.include_router(mcp_router)
     app.include_router(alerts_router)
+    app.include_router(aiops_router)
     return app
 
 

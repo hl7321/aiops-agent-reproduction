@@ -61,6 +61,12 @@ def test_product_base_registers_only_current_domain_tables() -> None:
         "user_chat_prompts",
         "user_chat_skills",
         "mcp_connections",
+        "diagnostic_tasks",
+        "diagnostic_steps",
+        "diagnostic_evidence",
+        "diagnostic_reports",
+        "report_evidence_links",
+        "graph_checkpoints",
     }
 
 

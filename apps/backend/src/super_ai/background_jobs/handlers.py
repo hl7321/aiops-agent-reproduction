@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal, TypeAlias
 
 from super_ai.project_config import JsonValue
 
 CancellationCheck = Callable[[], Awaitable[bool]]
+BackgroundJobTerminationReason: TypeAlias = Literal["cancelled", "timeout", "shutdown"]
+TerminationReasonReader = Callable[[], BackgroundJobTerminationReason | None]
+
+
+def _no_termination_reason() -> BackgroundJobTerminationReason | None:
+    return None
+
+
 BackgroundJobHandler = Callable[["BackgroundJobContext", JsonValue], Coroutine[Any, Any, None]]
 
 
@@ -21,10 +29,19 @@ class BackgroundJobContext:
     job_id: str
     owner_user_id: str
     _cancellation_check: CancellationCheck
+    _termination_reason: TerminationReasonReader = field(default=_no_termination_reason)
 
     async def raise_if_cancelled(self) -> None:
         if await self._cancellation_check():
             raise BackgroundJobCancelledError
+
+    async def cancellation_requested(self) -> bool:
+        """区分用户取消与 worker shutdown；后者不得误写领域 cancelled。"""
+        return await self._cancellation_check()
+
+    @property
+    def termination_reason(self) -> BackgroundJobTerminationReason | None:
+        return self._termination_reason()
 
 
 class HandlerRegistry:

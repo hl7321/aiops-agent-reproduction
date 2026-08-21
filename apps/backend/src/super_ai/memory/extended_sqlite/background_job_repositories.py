@@ -8,6 +8,12 @@ from typing import cast
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from super_ai.api_contracts import (
+    ERROR_DEFINITIONS,
+    SSE_ERROR_DATA_KEY,
+    SSE_ERROR_TYPE,
+    SSE_TASK_STATUS_TYPE,
+)
 from super_ai.background_jobs.models import (
     BackgroundJobEventRecord,
     BackgroundJobEventType,
@@ -20,6 +26,7 @@ from super_ai.memory.extended_sqlite.background_job_models import (
     BackgroundJobEventModel,
     BackgroundJobModel,
 )
+from super_ai.memory.extended_sqlite.diagnostic_models import DiagnosticTaskModel
 from super_ai.memory.primitives import dump_json, load_json, new_id, utc_now
 
 
@@ -98,6 +105,8 @@ class SqliteBackgroundJobStore:
             model.cancel_requested_at = now
             model.completed_at = now
             model.updated_at = now
+            await self._sync_diagnostic_status(model, "cancelled")
+            await self._add_diagnostic_terminal_events(model, "cancelled")
             await self._add_event(model, "cancelled", {})
         elif model.status == "running" and model.cancel_requested_at is None:
             model.cancel_requested_at = now
@@ -135,9 +144,28 @@ class SqliteBackgroundJobStore:
             completed_at=None,
         )
         self._session.add(retried)
+        await self._sync_diagnostic_status(retried, "accepted")
         await self._session.flush()
         await self._add_event(retried, "queued", {"retryOfJobId": source.id})
         return _job_record(retried)
+
+    async def _sync_diagnostic_status(self, job: BackgroundJobModel, status: str) -> None:
+        if job.resource_type != "diagnostic_task" or job.resource_id is None:
+            return
+        await self._session.execute(
+            update(DiagnosticTaskModel)
+            .where(
+                DiagnosticTaskModel.owner_user_id == job.owner_user_id,
+                DiagnosticTaskModel.id == job.resource_id,
+            )
+            .values(
+                status=status,
+                failure_code=None,
+                failure_reason=None,
+                completed_at=utc_now() if status == "cancelled" else None,
+                updated_at=utc_now(),
+            )
+        )
 
     async def list_events(
         self, owner_user_id: str, job_id: str, *, after_sequence: int
@@ -156,6 +184,24 @@ class SqliteBackgroundJobStore:
             )
         ).all()
         return [_event_record(model) for model in models]
+
+    async def append_progress_event(
+        self, owner_user_id: str, job_id: str, data: dict[str, object]
+    ) -> BackgroundJobEventRecord | None:
+        model = await self._owned(owner_user_id, job_id)
+        if model is None:
+            return None
+        await self._add_event(model, "progress", data)
+        event = await self._session.scalar(
+            select(BackgroundJobEventModel)
+            .where(
+                BackgroundJobEventModel.owner_user_id == owner_user_id,
+                BackgroundJobEventModel.job_id == job_id,
+            )
+            .order_by(BackgroundJobEventModel.sequence.desc())
+            .limit(1)
+        )
+        return _event_record(event) if event is not None else None
 
     async def claim_next(
         self, lease_owner: str, *, now: datetime, lease_seconds: float
@@ -241,16 +287,21 @@ class SqliteBackgroundJobStore:
         if model.cancel_requested_at is not None:
             model.status = "cancelled"
             model.completed_at = now
+            await self._add_diagnostic_terminal_events(model, "cancelled")
             await self._add_event(model, "cancelled", {})
         elif model.attempt < model.max_attempts:
             model.status = "queued"
             model.available_at = now + timedelta(seconds=min(30, 2 ** (model.attempt - 1)))
+            await self._sync_diagnostic_status(model, "accepted")
             await self._add_event(
                 model, "queued", {"attempt": model.attempt, "errorMessage": safe_error}
             )
         else:
             model.status = "failed"
             model.completed_at = now
+            await self._add_diagnostic_terminal_events(
+                model, "failed", error_message=safe_error
+            )
             await self._add_event(model, "failed", {"errorMessage": safe_error})
         await self._session.flush()
         return _job_record(model)
@@ -271,6 +322,7 @@ class SqliteBackgroundJobStore:
         model.updated_at = now
         model.lease_owner = None
         model.lease_expires_at = None
+        await self._add_diagnostic_terminal_events(model, status)
         await self._add_event(model, status, {})
         await self._session.flush()
         return _job_record(model)
@@ -300,7 +352,47 @@ class SqliteBackgroundJobStore:
             model.updated_at = now
             model.lease_owner = None
             model.lease_expires_at = None
+            await self._add_diagnostic_terminal_events(
+                model,
+                cast(BackgroundJobStatus, model.status),
+                error_message=model.error_message,
+            )
             await self._add_event(model, event_type, event_data)
+
+    async def _add_diagnostic_terminal_events(
+        self,
+        job: BackgroundJobModel,
+        status: BackgroundJobStatus,
+        *,
+        error_message: str | None = None,
+    ) -> None:
+        if job.resource_type != "diagnostic_task" or job.resource_id is None:
+            return
+        await self._add_event(
+            job,
+            "progress",
+            {
+                "eventType": SSE_TASK_STATUS_TYPE,
+                "data": {"taskId": job.resource_id, "status": status},
+            },
+        )
+        if status == "failed":
+            definition = ERROR_DEFINITIONS["SYSTEM_INTERNAL_ERROR"]
+            await self._add_event(
+                job,
+                "progress",
+                {
+                    "eventType": SSE_ERROR_TYPE,
+                    "data": {
+                        SSE_ERROR_DATA_KEY: {
+                            "code": definition.code,
+                            "category": definition.category,
+                            "httpStatus": definition.http_status,
+                            "message": error_message or definition.default_message,
+                        }
+                    },
+                },
+            )
 
     async def _owned(self, owner_user_id: str, job_id: str) -> BackgroundJobModel | None:
         _require_owner(owner_user_id)

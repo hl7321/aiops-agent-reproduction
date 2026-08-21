@@ -14,6 +14,7 @@ NOW = datetime(2026, 8, 18, 0, 0, tzinfo=timezone.utc)
 class FakeAuditWriter:
     def __init__(self) -> None:
         self.records: dict[str, AgentToolCallAuditRecord] = {}
+        self.last_fail_values: dict[str, object] = {}
 
     async def start(
         self, owner_user_id: str, audit: NewAgentToolCallAudit
@@ -49,6 +50,7 @@ class FakeAuditWriter:
         return completed
 
     async def fail(self, owner_user_id: str, audit_id: str, **values: object):
+        self.last_fail_values = values
         current = self.records[audit_id]
         failed = replace(
             current,
@@ -90,7 +92,7 @@ async def test_service_audits_completed_tool_and_logs_only_argument_keys(
 
 async def test_service_audits_failed_tool_without_swallowing_error() -> None:
     writer = FakeAuditWriter()
-    service = AgentToolAuditService(writer, now=lambda: NOW)
+    service = AgentToolAuditService(writer, now=lambda: NOW, api_key="SECRET_SENTINEL")
 
     async def operation() -> dict[str, object]:
         raise RuntimeError("provider failed SECRET_SENTINEL")
@@ -104,7 +106,7 @@ async def test_service_audits_failed_tool_without_swallowing_error() -> None:
             tool_name="knowledge_retrieval",
             arguments={"query": "QUERY_SENTINEL"},
             operation=operation,
-            api_key="SECRET_SENTINEL",
         )
 
     assert writer.records["audit-1"].status == "failed"
+    assert writer.last_fail_values["api_key"] == "SECRET_SENTINEL"

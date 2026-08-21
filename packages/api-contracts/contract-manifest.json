@@ -96,6 +96,12 @@
       "category": "system",
       "httpStatus": 503,
       "defaultMessage": "活跃告警来源暂时不可用"
+    },
+    "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE": {
+      "code": "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
+      "category": "system",
+      "httpStatus": 503,
+      "defaultMessage": "当前没有可用的日志检索工具"
     }
   },
   "openapi": {
@@ -121,6 +127,22 @@
         "successData": "ActiveAlertsData",
         "security": ["BearerAuth"],
         "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "SYSTEM_ALERT_SOURCES_UNAVAILABLE"]
+      },
+      "/aiops/diagnostics": {
+        "method": "POST", "operationId": "createAiopsDiagnostic", "successData": "DiagnosticCreateData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "VALIDATION_REQUEST_INVALID", "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE"]
+      },
+      "/aiops/diagnostics/{id}": {
+        "method": "GET", "operationId": "getAiopsDiagnostic", "successData": "DiagnosticDetailData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/aiops/diagnostics/{id}/evidence-chain": {
+        "method": "GET", "operationId": "getAiopsDiagnosticEvidenceChain", "successData": "DiagnosticEvidenceChainData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/aiops/diagnostics/{id}:stream": {
+        "method": "POST", "operationId": "streamAiopsDiagnostic", "successData": "SseEventStream",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "VALIDATION_REQUEST_INVALID", "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE"]
       },
       "/auth/register": {
         "method": "POST",
@@ -293,6 +315,13 @@
     },
     "alertOperations": [
       {"path":"/aiops/alerts/active","method":"GET","operationId":"getActiveAlerts","successData":"ActiveAlertsData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","SYSTEM_ALERT_SOURCES_UNAVAILABLE"]}
+    ],
+    "aiopsDiagnosticOperations": [
+      {"path":"/aiops/diagnostics","method":"POST","operationId":"createAiopsDiagnostic","successData":"DiagnosticCreateData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","VALIDATION_REQUEST_INVALID","SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE"]},
+      {"path":"/aiops/diagnostics","method":"GET","operationId":"listAiopsDiagnostics","successData":"DiagnosticListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/aiops/diagnostics/{id}","method":"GET","operationId":"getAiopsDiagnostic","successData":"DiagnosticDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/aiops/diagnostics/{id}/evidence-chain","method":"GET","operationId":"getAiopsDiagnosticEvidenceChain","successData":"DiagnosticEvidenceChainData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/aiops/diagnostics/{id}:stream","method":"POST","operationId":"streamAiopsDiagnostic","successData":"SseEventStream","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID","SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE"]}
     ],
     "knowledgeOperations": [
       {"path":"/knowledge-bases","method":"GET","operationId":"listKnowledgeBases","successData":"KnowledgeBaseListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},

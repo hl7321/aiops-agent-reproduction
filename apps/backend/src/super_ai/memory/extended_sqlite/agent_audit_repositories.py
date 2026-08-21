@@ -99,9 +99,22 @@ class SqliteAgentToolCallAuditRepository:
         ).all()
         return [_record(model) for model in models]
 
-    async def _owned(
-        self, owner_user_id: str, audit_id: str
-    ) -> AgentToolCallAuditModel | None:
+    async def list_for_diagnostic(
+        self, owner_user_id: str, diagnostic_task_id: str
+    ) -> list[AgentToolCallAuditRecord]:
+        models = (
+            await self._session.scalars(
+                select(AgentToolCallAuditModel)
+                .where(
+                    AgentToolCallAuditModel.owner_user_id == owner_user_id,
+                    AgentToolCallAuditModel.diagnostic_task_id == diagnostic_task_id,
+                )
+                .order_by(AgentToolCallAuditModel.started_at, AgentToolCallAuditModel.id)
+            )
+        ).all()
+        return [_record(model) for model in models]
+
+    async def _owned(self, owner_user_id: str, audit_id: str) -> AgentToolCallAuditModel | None:
         return await self._session.scalar(
             select(AgentToolCallAuditModel).where(
                 AgentToolCallAuditModel.owner_user_id == owner_user_id,

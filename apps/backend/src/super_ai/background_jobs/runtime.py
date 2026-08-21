@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from super_ai.background_jobs.handlers import (
     BackgroundJobCancelledError,
     BackgroundJobContext,
+    BackgroundJobTerminationReason,
     HandlerRegistry,
 )
 from super_ai.background_jobs.models import BackgroundJobRecord
@@ -103,7 +104,14 @@ class BackgroundJobWorker:
                     job.id, worker_id
                 )
 
-        context = BackgroundJobContext(job.id, job.owner_user_id, cancellation_check)
+        termination_reason: BackgroundJobTerminationReason | None = None
+
+        def read_termination_reason() -> BackgroundJobTerminationReason | None:
+            return termination_reason
+
+        context = BackgroundJobContext(
+            job.id, job.owner_user_id, cancellation_check, read_termination_reason
+        )
         handler_task = asyncio.create_task(
             handler(context, job.payload), name=f"background-job-handler-{job.id}"
         )
@@ -113,6 +121,7 @@ class BackgroundJobWorker:
             while True:
                 remaining = job.timeout_seconds - (monotonic() - started)
                 if remaining <= 0:
+                    termination_reason = "timeout"
                     handler_task.cancel()
                     await asyncio.gather(handler_task, return_exceptions=True)
                     await self._fail(job.id, worker_id, "后台任务执行超时")
@@ -126,6 +135,7 @@ class BackgroundJobWorker:
                     return
                 current = await self._heartbeat(job.id, worker_id)
                 if current is None or current.cancel_requested_at is not None:
+                    termination_reason = "cancelled"
                     handler_task.cancel()
                     await asyncio.gather(handler_task, return_exceptions=True)
                     await self._cancel(job.id, worker_id)
@@ -133,6 +143,7 @@ class BackgroundJobWorker:
         except BackgroundJobCancelledError:
             await self._cancel(job.id, worker_id)
         except asyncio.CancelledError:
+            termination_reason = "shutdown"
             handler_task.cancel()
             await asyncio.gather(handler_task, return_exceptions=True)
             raise

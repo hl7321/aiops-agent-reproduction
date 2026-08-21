@@ -4,8 +4,8 @@ import { ref } from "vue";
 import type {
   AppendChatMessageRequest,
   AgentToolCallAudit,
+  ChatReference,
   ChatStreamMessageRequest,
-  ReferenceSourceEvent,
   ChatSession,
   ChatSessionDetailData,
   ChatMemoryMode,
@@ -35,7 +35,7 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
     const liveContent = ref("");
     const liveReasoning = ref("");
     const liveToolCalls = ref<Record<string, ToolCallEvent["data"]>>({});
-    const liveReferences = ref<readonly ReferenceSourceEvent["data"]["source"][]>([]);
+    const liveReferences = ref<readonly ChatReference[]>([]);
     const liveStatus = ref<"idle" | "streaming" | "complete" | "error">("idle");
     const liveErrorMessage = ref<string | null>(null);
     const sleep = dependencies.sleep ?? delay;
@@ -158,7 +158,7 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
           else if (event.type === "reasoning.delta") liveReasoning.value += event.data.delta;
           else if (event.type === "tool.call") {
             liveToolCalls.value = { ...liveToolCalls.value, [event.data.toolCallId]: event.data };
-          } else if (event.type === "reference.source") {
+          } else if (event.type === "reference.source" && event.channel === "chat") {
             liveReferences.value = [...liveReferences.value, event.data.source];
           } else if (event.type === "error") {
             liveStatus.value = "error";
