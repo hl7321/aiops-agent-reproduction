@@ -23,7 +23,7 @@ async def test_fresh_upgrade_adds_normalized_diagnostic_tables(tmp_path: Path) -
     finally:
         await engine.dispose()
 
-    assert revision == "20260821_0012"
+    assert revision == "20260821_0013"
     assert {
         "diagnostic_tasks",
         "diagnostic_steps",

@@ -31,7 +31,11 @@ const JOB: BackgroundJob = {
   attempt: 1, maxAttempts: 3, timeoutSeconds: 600, availableAt: "now", createdAt: "now", updatedAt: "later",
 };
 const DETAIL: DiagnosticDetailData = {
-  task: TASK, backgroundJob: JOB, steps: [], report: {
+  task: TASK, backgroundJob: JOB, steps: [{
+    id: "step-1", diagnosticTaskId: TASK.id, planVersion: 1, position: 0, attempt: 1,
+    toolName: "SearchLog", arguments: {}, status: "succeeded", resultSummary: "找到日志",
+    errorMessage: null, startedAt: "now", completedAt: "later", createdAt: "now",
+  }], report: {
     id: "report-1", diagnosticTaskId: TASK.id, revision: 1,
     markdown: "# 告警分析报告\n<img src=x onerror=alert(1)>\n## 📊 结论\n证据不足，仍存在不确定性。",
     generationMode: "fallback", uncertainty: true, createdAt: "later",
@@ -66,7 +70,10 @@ async function mountView() {
   store.activeDetail = DETAIL; store.evidenceChain = CHAIN; store.selectedCase = CASE;
   store.initialize = vi.fn(async () => undefined); store.reset = vi.fn();
   store.createDiagnostic = vi.fn(async () => undefined);
-  return { wrapper: mount(AiopsView, { global: { plugins: [router] } }), store, router };
+  return { wrapper: mount(AiopsView, { global: {
+    plugins: [router],
+    stubs: { UserFeedbackControl: { template: '<i class="feedback-control-stub" />' } },
+  } }), store, router };
 }
 
 describe("AiopsView", () => {
@@ -88,6 +95,7 @@ describe("AiopsView", () => {
     expect(wrapper.text()).not.toContain("raw-alert-json-must-not-render");
     expect(wrapper.text()).not.toContain("raw-evidence-json");
     expect(wrapper.text()).not.toContain("private-full-log");
+    expect(wrapper.findAll(".feedback-control-stub")).toHaveLength(2);
   });
 
   it("从真实告警预填，也允许只用 query 创建且不生成 context", async () => {

@@ -199,6 +199,17 @@ class SqliteDiagnosticRepository:
         ).all()
         return [_step(model) for model in models]
 
+    async def get_step(
+        self, owner_user_id: str, step_id: str
+    ) -> DiagnosticStepRecord | None:
+        model = await self._session.scalar(
+            select(DiagnosticStepModel).where(
+                DiagnosticStepModel.owner_user_id == owner_user_id,
+                DiagnosticStepModel.id == step_id,
+            )
+        )
+        return _step(model) if model is not None else None
+
     async def add_evidence(
         self, owner_user_id: str, task_id: str, evidence: NewEvidence
     ) -> DiagnosticEvidenceRecord:
@@ -339,6 +350,17 @@ class SqliteDiagnosticRepository:
             .limit(1)
         )
         return _report(model) if model else None
+
+    async def get_report(
+        self, owner_user_id: str, report_id: str
+    ) -> DiagnosticReportRecord | None:
+        model = await self._session.scalar(
+            select(DiagnosticReportModel).where(
+                DiagnosticReportModel.owner_user_id == owner_user_id,
+                DiagnosticReportModel.id == report_id,
+            )
+        )
+        return _report(model) if model is not None else None
 
     async def link_evidence(
         self,

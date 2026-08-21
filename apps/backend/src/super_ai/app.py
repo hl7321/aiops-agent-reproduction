@@ -27,6 +27,7 @@ from super_ai.chat.router import router as chat_router
 from super_ai.chat_configuration.router import router as chat_configuration_router
 from super_ai.document_indexing.factory import create_configured_document_index_handler_factory
 from super_ai.document_indexing.router import router as document_indexing_router
+from super_ai.feedback.router import router as feedback_router
 from super_ai.knowledge.dependencies import (
     create_knowledge_service_dependency,
     get_knowledge_service,
@@ -197,6 +198,7 @@ def create_app(
     app.include_router(alerts_router)
     app.include_router(aiops_router)
     app.include_router(aiops_cases_router)
+    app.include_router(feedback_router)
     return app
 
 

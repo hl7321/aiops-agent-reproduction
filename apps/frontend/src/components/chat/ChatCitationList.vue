@@ -3,7 +3,12 @@ import { computed } from "vue";
 
 import type { ChatReference, JsonValue } from "@super-ai/api-contracts";
 
-const props = defineProps<{ references: readonly ChatReference[] }>();
+import UserFeedbackControl from "../feedback/UserFeedbackControl.vue";
+
+const props = defineProps<{
+  references: readonly ChatReference[];
+  assistantMessageId?: string | undefined;
+}>();
 
 const visibleReferences = computed(() => [...props.references]
   .sort((left, right) => left.rerankRank - right.rerankRank
@@ -59,6 +64,12 @@ function displayMetadata(value: JsonValue): string {
           documentId: reference.documentId,
         } }">前往所属文档</RouterLink>
       </details>
+      <UserFeedbackControl
+        v-if="assistantMessageId"
+        target-type="citation"
+        :target-id="assistantMessageId"
+        :subject-id="reference.chunkId"
+      />
     </article>
   </section>
 </template>

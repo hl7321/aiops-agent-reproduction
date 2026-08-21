@@ -323,6 +323,14 @@
       "/mcp/connections/{id}:check": {
         "method": "POST", "operationId": "checkMcpConnection", "successData": "McpConnectionCheckResult",
         "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "SYSTEM_MCP_CONNECTION_FAILED"]
+      },
+      "/feedback": {
+        "method": "GET", "operationId": "listUserFeedback", "successData": "FeedbackListData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "VALIDATION_REQUEST_INVALID"]
+      },
+      "/feedback/{id}": {
+        "method": "DELETE", "operationId": "deleteUserFeedback", "successData": "FeedbackDeleteData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
       }
     },
     "alertOperations": [
@@ -380,6 +388,11 @@
       {"path":"/mcp/connections/{id}","method":"PUT","operationId":"updateMcpConnection","successData":"McpConnection","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT","VALIDATION_REQUEST_INVALID"]},
       {"path":"/mcp/connections/{id}","method":"DELETE","operationId":"deleteMcpConnection","successData":"McpConnectionDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID"]},
       {"path":"/mcp/connections/{id}:check","method":"POST","operationId":"checkMcpConnection","successData":"McpConnectionCheckResult","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID","SYSTEM_MCP_CONNECTION_FAILED"]}
+    ],
+    "feedbackOperations": [
+      {"path":"/feedback","method":"GET","operationId":"listUserFeedback","successData":"FeedbackListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/feedback","method":"POST","operationId":"upsertUserFeedback","successData":"UserFeedback","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/feedback/{id}","method":"DELETE","operationId":"deleteUserFeedback","successData":"FeedbackDeleteData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]}
     ]
   },
   "sse": {

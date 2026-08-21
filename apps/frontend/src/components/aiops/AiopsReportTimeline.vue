@@ -6,6 +6,7 @@ import type { DiagnosticDetailData } from "@super-ai/api-contracts";
 
 import type { AiopsTimelineItem } from "../../aiops/timeline";
 import { renderSafeMarkdown } from "../../chat/renderSafeMarkdown";
+import UserFeedbackControl from "../feedback/UserFeedbackControl.vue";
 
 const props = defineProps<{
   detail: DiagnosticDetailData | null;
@@ -47,7 +48,14 @@ function statusLabel(status: string): string {
     <div class="center-body">
       <section class="report-panel">
         <header><strong>诊断报告</strong><span v-if="detail?.report">{{ detail.report.uncertainty ? "包含不确定性" : "证据已关联" }} · {{ detail.report.generationMode === "fallback" ? "诚实 fallback" : "模型生成" }}</span></header>
-        <div v-if="detail?.report" class="aiops-report-scroll markdown-body" v-html="reportHtml" />
+        <div v-if="detail?.report" class="aiops-report-scroll">
+          <div class="markdown-body" v-html="reportHtml" />
+          <UserFeedbackControl
+            target-type="diagnostic_report"
+            :target-id="detail.report.id"
+            :subject-id="null"
+          />
+        </div>
         <div v-else class="blank-report">最终报告将在持久任务成功后显示；失败不会伪装为成功。</div>
       </section>
       <section class="timeline-panel">

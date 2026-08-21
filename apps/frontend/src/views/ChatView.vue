@@ -56,7 +56,11 @@ async function send(content: string): Promise<void> {
             :live-tool-calls="chat.liveToolCalls"
             :audits="[]"
           />
-          <ChatMessageBubble v-if="chat.liveContent" :message="liveMessage" />
+          <ChatMessageBubble
+            v-if="chat.liveContent"
+            :message="liveMessage"
+            :feedback-enabled="false"
+          />
           <ChatCitationList :references="chat.liveReferences" />
           <p v-if="chat.liveErrorMessage" class="field-error" role="alert">{{ chat.liveErrorMessage }}</p>
         </div>

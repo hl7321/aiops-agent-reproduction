@@ -107,8 +107,10 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         "/knowledge-bases/{kb}/documents/{document}/index-tasks/{task}:retry",
         "/mcp/connections",
         "/mcp/connections/{id}",
-        "/mcp/connections/{id}:check",
-    }
+            "/mcp/connections/{id}:check",
+            "/feedback",
+            "/feedback/{id}",
+        }
 
     operations = cast(list[dict[str, str]], openapi["knowledgeOperations"])
     schema = create_app().openapi()

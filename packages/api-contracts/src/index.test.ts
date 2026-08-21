@@ -192,6 +192,8 @@ describe("HTTP 合同", () => {
       "/mcp/connections",
       "/mcp/connections/{id}",
       "/mcp/connections/{id}:check",
+      "/feedback",
+      "/feedback/{id}",
     ]);
     expect(OPENAPI_PATHS["/auth/register"]).toEqual({
       method: "POST",

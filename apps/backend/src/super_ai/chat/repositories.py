@@ -6,6 +6,7 @@ from typing import Protocol
 
 from super_ai.chat.models import (
     ChatMemoryMode,
+    ChatMessageRecord,
     ChatMessageRole,
     ChatSessionDetailRecord,
     ChatSessionRecord,
@@ -20,6 +21,9 @@ class ChatRepository(Protocol):
         self, owner_user_id: str
     ) -> builtins.list[ChatSessionDetailRecord]: ...
     async def get(self, owner_user_id: str, session_id: str) -> ChatSessionDetailRecord | None: ...
+    async def get_message(
+        self, owner_user_id: str, message_id: str
+    ) -> ChatMessageRecord | None: ...
     async def append(
         self,
         owner_user_id: str,

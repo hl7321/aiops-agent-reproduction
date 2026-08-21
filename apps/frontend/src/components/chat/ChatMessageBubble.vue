@@ -4,13 +4,15 @@ import { computed } from "vue";
 import type { AgentToolCallAudit, ChatMessage } from "@super-ai/api-contracts";
 
 import { renderSafeMarkdown } from "../../chat/renderSafeMarkdown";
+import UserFeedbackControl from "../feedback/UserFeedbackControl.vue";
 import ChatCitationList from "./ChatCitationList.vue";
 import ChatToolActivity from "./ChatToolActivity.vue";
 
 const props = withDefaults(defineProps<{
   message: ChatMessage;
   audits?: readonly AgentToolCallAudit[];
-}>(), { audits: () => [] });
+  feedbackEnabled?: boolean;
+}>(), { audits: () => [], feedbackEnabled: true });
 const renderedContent = computed(() => renderSafeMarkdown(props.message.content));
 const messageAudits = computed(() => {
   const ids = new Set(props.message.metadata.toolCallIds ?? []);
@@ -33,6 +35,13 @@ const messageAudits = computed(() => {
       <ChatCitationList
         v-if="message.role === 'assistant'"
         :references="message.metadata.references ?? []"
+        :assistant-message-id="feedbackEnabled ? message.id : undefined"
+      />
+      <UserFeedbackControl
+        v-if="message.role === 'assistant' && feedbackEnabled"
+        target-type="chat_message"
+        :target-id="message.id"
+        :subject-id="null"
       />
     </div>
   </article>

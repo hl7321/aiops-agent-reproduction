@@ -33,7 +33,7 @@ async def test_case_migration_and_document_metadata(tmp_path: Path) -> None:
             )
     finally:
         await engine.dispose()
-    assert revision == "20260821_0012"
+    assert revision == "20260821_0013"
     assert "aiops_diagnostic_cases" in tables
     assert {"task_id", "report_id", "document_id", "index_task_id", "evidence_ids"} <= case_columns
     assert "source_metadata" in document_columns

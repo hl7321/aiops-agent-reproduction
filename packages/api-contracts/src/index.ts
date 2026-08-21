@@ -6,6 +6,7 @@ export * from "./chat";
 export * from "./chat-configuration";
 export * from "./document-indexing";
 export * from "./errors";
+export * from "./feedback";
 export * from "./http";
 export * from "./knowledge";
 export * from "./knowledge-retrieval";

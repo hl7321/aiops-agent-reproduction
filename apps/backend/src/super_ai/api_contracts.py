@@ -770,6 +770,66 @@ class DiagnosticCaseDetailData(ContractModel):
     item: DiagnosticCase
 
 
+FeedbackTargetType: TypeAlias = Literal[
+    "chat_message", "citation", "diagnostic_step", "diagnostic_report"
+]
+FeedbackRating: TypeAlias = Literal["positive", "negative"]
+FeedbackReason: TypeAlias = Literal[
+    "incorrect", "incomplete", "irrelevant", "unclear", "unsafe", "other"
+]
+
+
+class UserFeedback(ContractModel):
+    id: str
+    target_type: FeedbackTargetType = Field(alias="targetType")
+    target_id: str = Field(alias="targetId")
+    subject_id: str | None = Field(alias="subjectId")
+    rating: FeedbackRating
+    reason: FeedbackReason | None
+    comment: str | None
+    correction: str | None
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class FeedbackListData(ContractModel):
+    items: list[UserFeedback]
+
+
+class UserFeedbackUpsertRequest(ContractModel):
+    target_type: FeedbackTargetType = Field(alias="targetType")
+    target_id: str = Field(alias="targetId", min_length=1, max_length=128)
+    subject_id: str | None = Field(default=None, alias="subjectId", max_length=128)
+    rating: FeedbackRating
+    reason: FeedbackReason | None = None
+    comment: str | None = Field(default=None, max_length=2000)
+    correction: str | None = Field(default=None, max_length=4000)
+
+    @field_validator(
+        "target_id", "subject_id", "reason", "comment", "correction", mode="before"
+    )
+    @classmethod
+    def trim_feedback_text(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_subject_shape(self) -> "UserFeedbackUpsertRequest":
+        subject = self.subject_id.strip() if self.subject_id is not None else ""
+        if self.target_type == "citation" and not subject:
+            raise ValueError("citation 必须提供 subjectId")
+        if self.target_type != "citation" and subject:
+            raise ValueError(f"{self.target_type} 不接受 subjectId")
+        return self
+
+
+class FeedbackDeleteData(ContractModel):
+    deleted: Literal[True] = True
+    feedback_id: str = Field(alias="feedbackId")
+
+
 class DocumentIndexTaskModel(ContractModel):
     id: str
     knowledge_base_id: str = Field(alias="knowledgeBaseId")

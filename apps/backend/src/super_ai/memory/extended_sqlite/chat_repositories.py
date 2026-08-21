@@ -98,6 +98,17 @@ class SqliteChatRepository:
             _session_record(session), tuple(_message_record(item) for item in messages)
         )
 
+    async def get_message(
+        self, owner_user_id: str, message_id: str
+    ) -> ChatMessageRecord | None:
+        model = await self._session.scalar(
+            select(ChatMessageModel).where(
+                ChatMessageModel.owner_user_id == owner_user_id,
+                ChatMessageModel.id == message_id,
+            )
+        )
+        return _message_record(model) if model is not None else None
+
     async def append(
         self,
         owner_user_id: str,

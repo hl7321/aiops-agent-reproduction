@@ -30,6 +30,7 @@ importlib.import_module("super_ai.memory.extended_sqlite.chat_configuration_mode
 importlib.import_module("super_ai.memory.extended_sqlite.mcp_connection_models")
 importlib.import_module("super_ai.memory.extended_sqlite.diagnostic_models")
 importlib.import_module("super_ai.memory.extended_sqlite.diagnosis_case_models")
+importlib.import_module("super_ai.memory.extended_sqlite.feedback_models")
 target_metadata = Base.metadata
 
 
