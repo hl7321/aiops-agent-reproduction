@@ -35,7 +35,7 @@ async def test_migration_creates_exact_three_chat_configuration_tables(
             tables, skill_columns = await connection.run_sync(_schema)
     finally:
         await engine.dispose()
-    assert revision == "20260820_0011"
+    assert revision == "20260821_0012"
     assert {
         "user_chat_configurations",
         "user_chat_prompts",

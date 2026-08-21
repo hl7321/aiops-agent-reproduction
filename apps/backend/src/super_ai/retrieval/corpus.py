@@ -30,7 +30,7 @@ class SqliteRetrievalCorpusSource:
                 knowledge_base_id=document.knowledge_base_id,
                 source=document.filename,
                 excerpt=chunk.text,
-                metadata=chunk.metadata,
+                metadata={**document.source_metadata, **chunk.metadata},
             )
             for document in documents
             for chunk in chunk_document_text(document.indexable_text, document.chunking_config)

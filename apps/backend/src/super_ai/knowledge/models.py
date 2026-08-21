@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from super_ai.knowledge.chunking import ChunkingConfig
+from super_ai.project_config import JsonValue
 
 if TYPE_CHECKING:
     from super_ai.api_contracts import DocumentIndexStatus
@@ -23,6 +24,7 @@ class KnowledgeDocumentRecord:
     index_status: "DocumentIndexStatus"
     chunking_config: ChunkingConfig
     indexable_text: str
+    source_metadata: dict[str, JsonValue]
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime

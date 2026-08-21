@@ -7,7 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from super_ai.memory.primitives import new_id, utc_now
 from super_ai.memory.sqlite.base import Base
-from super_ai.memory.sqlite.types import UTCDateTime
+from super_ai.memory.sqlite.types import CanonicalJson, UTCDateTime
+from super_ai.project_config import JsonValue
 
 
 class KnowledgeDocumentModel(Base):
@@ -45,6 +46,9 @@ class KnowledgeDocumentModel(Base):
     max_characters: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     overlap: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     indexable_text: Mapped[str] = mapped_column(Text(), nullable=False)
+    source_metadata: Mapped[dict[str, JsonValue]] = mapped_column(
+        CanonicalJson(), nullable=False, default=dict
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)

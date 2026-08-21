@@ -7,6 +7,7 @@ from typing import Protocol
 
 from super_ai.knowledge.files import ExtractedDocument
 from super_ai.knowledge.models import KnowledgeDocumentRecord
+from super_ai.project_config import JsonValue
 
 
 class DuplicateActiveDocumentHashError(Exception):
@@ -35,6 +36,7 @@ class KnowledgeDocumentRepository(Protocol):
         strategy: str,
         max_characters: int | None,
         overlap: int | None,
+        source_metadata: dict[str, JsonValue] | None = None,
     ) -> KnowledgeDocumentRecord: ...
 
     async def soft_delete(

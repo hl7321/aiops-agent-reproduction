@@ -43,7 +43,7 @@ async def test_migration_creates_normalized_mcp_connections(mcp_database_url: st
     finally:
         await engine.dispose()
 
-    assert revision == "20260820_0011"
+    assert revision == "20260821_0012"
     assert {
         "owner_user_id",
         "name",

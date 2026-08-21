@@ -14,6 +14,7 @@ from super_ai.knowledge.repositories import (
     KnowledgeDocumentRepository,
 )
 from super_ai.memory.primitives import utc_now
+from super_ai.project_config import JsonValue
 from super_ai.tenancy.context import OwnerScope
 
 _DEFAULT_KB_NAMESPACE = UUID("f7654427-2347-4f00-8cd1-12bd18b60d0c")
@@ -84,6 +85,7 @@ class KnowledgeDocumentService:
         config: ChunkingConfig,
         *,
         overwrite: bool = False,
+        source_metadata: dict[str, JsonValue] | None = None,
     ) -> KnowledgeDocumentRecord:
         self.ensure_knowledge_base(owner_user_id, knowledge_base_id)
         duplicates = await self._repository.find_active_by_hash(
@@ -105,6 +107,7 @@ class KnowledgeDocumentService:
                 strategy=config.strategy,
                 max_characters=config.max_characters,
                 overlap=config.overlap,
+                source_metadata=source_metadata or {},
             )
         except DuplicateActiveDocumentHashError as error:
             raise KnowledgeConflictError from error

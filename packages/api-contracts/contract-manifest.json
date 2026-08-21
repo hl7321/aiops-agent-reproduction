@@ -144,6 +144,18 @@
         "method": "POST", "operationId": "streamAiopsDiagnostic", "successData": "SseEventStream",
         "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "VALIDATION_REQUEST_INVALID", "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE"]
       },
+      "/aiops/diagnostic-cases": {
+        "method": "GET", "operationId": "listAiopsDiagnosticCases", "successData": "DiagnosticCaseListData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN"]
+      },
+      "/aiops/diagnostic-cases/{id}": {
+        "method": "GET", "operationId": "getAiopsDiagnosticCase", "successData": "DiagnosticCaseDetailData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND"]
+      },
+      "/aiops/diagnostics/{id}:save-to-knowledge": {
+        "method": "POST", "operationId": "saveAiopsDiagnosticToKnowledge", "successData": "SaveDiagnosisToKnowledgeData",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_CONFLICT", "BUSINESS_RULE_VIOLATION", "VALIDATION_REQUEST_INVALID"]
+      },
       "/auth/register": {
         "method": "POST",
         "operationId": "registerUser",
@@ -322,6 +334,11 @@
       {"path":"/aiops/diagnostics/{id}","method":"GET","operationId":"getAiopsDiagnostic","successData":"DiagnosticDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
       {"path":"/aiops/diagnostics/{id}/evidence-chain","method":"GET","operationId":"getAiopsDiagnosticEvidenceChain","successData":"DiagnosticEvidenceChainData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
       {"path":"/aiops/diagnostics/{id}:stream","method":"POST","operationId":"streamAiopsDiagnostic","successData":"SseEventStream","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","VALIDATION_REQUEST_INVALID","SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE"]}
+    ],
+    "aiopsCaseOperations": [
+      {"path":"/aiops/diagnostic-cases","method":"GET","operationId":"listAiopsDiagnosticCases","successData":"DiagnosticCaseListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
+      {"path":"/aiops/diagnostic-cases/{id}","method":"GET","operationId":"getAiopsDiagnosticCase","successData":"DiagnosticCaseDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
+      {"path":"/aiops/diagnostics/{id}:save-to-knowledge","method":"POST","operationId":"saveAiopsDiagnosticToKnowledge","successData":"SaveDiagnosisToKnowledgeData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT","BUSINESS_RULE_VIOLATION","VALIDATION_REQUEST_INVALID"]}
     ],
     "knowledgeOperations": [
       {"path":"/knowledge-bases","method":"GET","operationId":"listKnowledgeBases","successData":"KnowledgeBaseListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},

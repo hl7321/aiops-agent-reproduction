@@ -9,6 +9,7 @@ from pydantic import JsonValue
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
+from super_ai.aiops.cases.router import router as aiops_cases_router
 from super_ai.aiops.factory import create_configured_aiops_handler_factory
 from super_ai.aiops.router import router as aiops_router
 from super_ai.alerts.router import router as alerts_router
@@ -195,6 +196,7 @@ def create_app(
     app.include_router(mcp_router)
     app.include_router(alerts_router)
     app.include_router(aiops_router)
+    app.include_router(aiops_cases_router)
     return app
 
 

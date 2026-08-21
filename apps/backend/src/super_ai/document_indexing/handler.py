@@ -72,7 +72,7 @@ class DocumentIndexHandler:
                     content=chunk.text,
                     source=document.filename,
                     created_at=document.uploaded_at,
-                    metadata=chunk.metadata,
+                    metadata={**document.source_metadata, **chunk.metadata},
                     vector=vector,
                 )
                 for chunk, vector in zip(chunks, vectors, strict=True)

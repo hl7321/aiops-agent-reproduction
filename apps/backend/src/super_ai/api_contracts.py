@@ -733,6 +733,31 @@ class DiagnosticEvidenceChainData(ContractModel):
     tool_audits: list[AgentToolCallAudit] = Field(alias="toolAudits")
 
 
+class DiagnosticCase(ContractModel):
+    id: str
+    owner_user_id: str = Field(alias="ownerUserId")
+    task_id: str = Field(alias="taskId")
+    report_id: str = Field(alias="reportId")
+    document_id: str = Field(alias="documentId")
+    index_task_id: str = Field(alias="indexTaskId")
+    alert_name: str = Field(alias="alertName")
+    service: str
+    keywords: list[str]
+    root_cause: str = Field(alias="rootCause")
+    remediation: str
+    summary: str
+    evidence_ids: list[str] = Field(alias="evidenceIds")
+    created_at: str = Field(alias="createdAt")
+
+
+class DiagnosticCaseListData(ContractModel):
+    items: list[DiagnosticCase]
+
+
+class DiagnosticCaseDetailData(ContractModel):
+    item: DiagnosticCase
+
+
 class DocumentIndexTaskModel(ContractModel):
     id: str
     knowledge_base_id: str = Field(alias="knowledgeBaseId")
@@ -772,6 +797,11 @@ class KnowledgeDocumentModel(ContractModel):
     uploaded_at: str = Field(alias="uploadedAt")
     index_status: DocumentIndexStatus = Field(alias="indexStatus")
     chunking_config: ChunkingConfigModel = Field(alias="chunkingConfig")
+
+
+class SaveDiagnosisToKnowledgeData(ContractModel):
+    document: KnowledgeDocumentModel
+    index_task: DocumentIndexTaskModel = Field(alias="indexTask")
 
 
 class KnowledgeDocumentListData(ContractModel):

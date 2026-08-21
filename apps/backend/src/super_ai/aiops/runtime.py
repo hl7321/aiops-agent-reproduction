@@ -65,6 +65,12 @@ class DiagnosticToolResolver(Protocol):
     ) -> tuple[BaseTool, ...]: ...
 
 
+class DiagnosisCaseSink(Protocol):
+    async def persist(
+        self, owner_user_id: str, task_id: str, report_id: str
+    ) -> object: ...
+
+
 class DiagnosticState(TypedDict):
     task_id: str
     next_position: int
@@ -87,6 +93,7 @@ class DiagnosticRuntime:
         model: DiagnosticModel,
         auditor: AgentToolAuditService,
         *,
+        case_persistor: DiagnosisCaseSink | None = None,
         secret_values: Sequence[str] = (),
     ) -> None:
         self._store = store
@@ -94,6 +101,7 @@ class DiagnosticRuntime:
         self._tool_resolver = tool_resolver
         self._model = model
         self._auditor = auditor
+        self._case_persistor = case_persistor
         self._secret_values = tuple(value for value in secret_values if value)
 
     def handler(self) -> BackgroundJobHandler:
@@ -446,6 +454,8 @@ class DiagnosticRuntime:
                         position,
                     )
             await self._store.call("transition_task", owner, task_id, "succeeded")
+            if self._case_persistor is not None:
+                await self._case_persistor.persist(owner, task_id, saved.id)
             await emit(SSE_REPORT_TYPE, {SSE_REPORT_TYPE: _report_payload(saved)})
             await emit(
                 SSE_TASK_STATUS_TYPE,

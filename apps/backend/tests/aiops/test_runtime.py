@@ -6,6 +6,7 @@ import pytest
 from langchain_core.tools import BaseTool, tool
 
 from super_ai.agent_audit.service import AgentToolAuditService
+from super_ai.aiops.cases.service import DiagnosisCasePersistor
 from super_ai.aiops.models import PlanStep
 from super_ai.aiops.planning import PlanDraft, PlanStepDraft, ReplanDraft, ReportDraft
 from super_ai.aiops.runtime import DiagnosticRuntime
@@ -141,6 +142,7 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
             AgentToolAuditService(
                 SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
             ),
+            case_persistor=DiagnosisCasePersistor(runtime.session_factory),
         )
 
         async def not_cancelled() -> bool:
@@ -158,6 +160,7 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
             events = await SqliteBackgroundJobStore(session).list_events(
                 "owner", job.id, after_sequence=0
             )
+            cases = await DiagnosisCasePersistor(runtime.session_factory).list("owner")
         assert saved is not None and saved.status == "succeeded"
         assert [item.kind for item in evidence] == ["log"]
         assert report is not None and report.generation_mode == "fallback"
@@ -165,6 +168,8 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
         assert [item.evidence_id for item in links] == [evidence[0].id]
         assert checkpoint is not None and checkpoint.node == "report"
         assert events is not None
+        assert len(cases) == 1 and cases[0].task_id == task.id
+        assert cases[0].evidence_ids == (evidence[0].id,)
         assert any("未检索到匹配 SOP" in str(item.data) for item in events)
     finally:
         await runtime.close()

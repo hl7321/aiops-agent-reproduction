@@ -21,6 +21,10 @@ import super_ai.alerts.providers
 import super_ai.alerts.router
 import super_ai.alerts.service
 import super_ai.alerts.settings
+import super_ai.aiops.cases
+import super_ai.aiops.cases.content
+import super_ai.aiops.cases.router
+import super_ai.aiops.cases.service
 import super_ai.background_jobs
 import super_ai.background_jobs.handlers
 import super_ai.background_jobs.runtime

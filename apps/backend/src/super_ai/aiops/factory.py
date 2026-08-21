@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from super_ai.agent_audit.service import AgentToolAuditService
+from super_ai.aiops.cases.service import DiagnosisCasePersistor
 from super_ai.aiops.planning import QwenDiagnosticModel
 from super_ai.aiops.runtime import DiagnosticRuntime
 from super_ai.background_jobs.handlers import BackgroundJobContext, BackgroundJobHandler
@@ -88,6 +89,7 @@ def create_configured_aiops_handler_factory(
                     now=utc_now,
                     api_key=llm_settings.api_key.get_secret_value(),
                 ),
+                case_persistor=DiagnosisCasePersistor(sessions),
                 secret_values=(llm_settings.api_key.get_secret_value(),),
             )
             await runtime.handler()(context, payload)

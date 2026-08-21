@@ -2,18 +2,32 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import manifest from "../contract-manifest.json";
 import type {
+  DiagnosticCase,
   DiagnosticCreateData,
   DiagnosticEvidenceChainData,
   DiagnosticTask,
   TaskStatusEvent,
 } from "./index";
-import { AIOPS_DIAGNOSTIC_OPERATIONS, ERROR_DEFINITIONS, isSseEvent } from "./index";
+import {
+  AIOPS_CASE_OPERATIONS,
+  AIOPS_DIAGNOSTIC_OPERATIONS,
+  ERROR_DEFINITIONS,
+  isSseEvent,
+} from "./index";
 
 describe("AIOps 诊断共享合同", () => {
   it("定义任务、创建结果和证据链", () => {
     expectTypeOf<DiagnosticTask>().toHaveProperty("status");
     expectTypeOf<DiagnosticCreateData>().toHaveProperty("backgroundJob");
     expectTypeOf<DiagnosticEvidenceChainData>().toHaveProperty("reportEvidenceLinks");
+  });
+
+  it("定义诊断 case 与三条受保护操作", () => {
+    expectTypeOf<DiagnosticCase>().toHaveProperty("indexTaskId");
+    expect(AIOPS_CASE_OPERATIONS).toEqual(manifest.openapi.aiopsCaseOperations);
+    expect(AIOPS_CASE_OPERATIONS).toHaveLength(3);
+    expect(AIOPS_CASE_OPERATIONS.every((item) => item.security.includes("BearerAuth"))).toBe(true);
+    expect(AIOPS_CASE_OPERATIONS[2]?.errors).toContain("VALIDATION_REQUEST_INVALID");
   });
 
   it("登记五个受保护 path 且没有专用 cancel/retry", () => {

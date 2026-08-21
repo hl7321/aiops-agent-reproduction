@@ -2,6 +2,8 @@ import type { ActiveAlert } from "./alerts";
 import type { BackgroundJob } from "./background-jobs";
 import type { AgentToolCallAudit } from "./chat";
 import type { JsonValue } from "./http";
+import type { KnowledgeDocument } from "./knowledge";
+import type { DocumentIndexTask } from "./document-indexing";
 
 export type DiagnosticStatus = "accepted" | "running" | "succeeded" | "failed" | "cancelled";
 export type DiagnosticStepStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
@@ -120,4 +122,28 @@ export interface DiagnosticEvidenceChainData {
   readonly evidence: readonly DiagnosticEvidence[];
   readonly reportEvidenceLinks: readonly ReportEvidenceLink[];
   readonly toolAudits: readonly AgentToolCallAudit[];
+}
+
+export interface DiagnosticCase {
+  readonly id: string;
+  readonly ownerUserId: string;
+  readonly taskId: string;
+  readonly reportId: string;
+  readonly documentId: string;
+  readonly indexTaskId: string;
+  readonly alertName: string;
+  readonly service: string;
+  readonly keywords: readonly string[];
+  readonly rootCause: string;
+  readonly remediation: string;
+  readonly summary: string;
+  readonly evidenceIds: readonly string[];
+  readonly createdAt: string;
+}
+
+export interface DiagnosticCaseListData { readonly items: readonly DiagnosticCase[]; }
+export interface DiagnosticCaseDetailData { readonly item: DiagnosticCase; }
+export interface SaveDiagnosisToKnowledgeData {
+  readonly document: KnowledgeDocument;
+  readonly indexTask: DocumentIndexTask;
 }

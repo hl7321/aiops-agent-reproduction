@@ -95,6 +95,7 @@ async def _seed(url: str) -> tuple[PersistenceRuntime, str, str, str]:
             strategy="fixed-character",
             max_characters=1,
             overlap=0,
+            source_metadata={"knowledgeType": "diagnostic-case", "sourceTaskId": "diag-a"},
         )
         task = await SqliteDocumentIndexTaskRepository(session).create(
             "user-a", NewDocumentIndexTask(kb, document.id)
@@ -122,7 +123,12 @@ async def test_handler_batches_embedding_and_inserts_all_chunks_once(
         first = vectors.inserted[0]
         assert first.document_id == document_id and first.knowledge_base_id == kb
         assert first.source == "source.md"
-        assert first.metadata == {"index": 0, "strategy": "fixed-character"}
+        assert first.metadata == {
+            "knowledgeType": "diagnostic-case",
+            "sourceTaskId": "diag-a",
+            "index": 0,
+            "strategy": "fixed-character",
+        }
         assert vectors.scope is not None
         assert vectors.scope.tenant_id == vectors.scope.owner_user_id == "user-a"
         async with transaction_scope(runtime.session_factory) as session:

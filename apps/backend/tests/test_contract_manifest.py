@@ -74,6 +74,9 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         "/aiops/diagnostics/{id}",
         "/aiops/diagnostics/{id}/evidence-chain",
         "/aiops/diagnostics/{id}:stream",
+        "/aiops/diagnostic-cases",
+        "/aiops/diagnostic-cases/{id}",
+        "/aiops/diagnostics/{id}:save-to-knowledge",
         "/auth/register",
         "/auth/login",
         "/auth/logout",
@@ -127,6 +130,10 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
         assert actual["operationId"] == operation["operationId"]
         assert actual["security"] == [{"BearerAuth": []}]
     for operation in cast(list[dict[str, str]], openapi["aiopsDiagnosticOperations"]):
+        actual = schema["paths"][operation["path"]][operation["method"].lower()]
+        assert actual["operationId"] == operation["operationId"]
+        assert actual["security"] == [{"BearerAuth": []}]
+    for operation in cast(list[dict[str, str]], openapi["aiopsCaseOperations"]):
         actual = schema["paths"][operation["path"]][operation["method"].lower()]
         assert actual["operationId"] == operation["operationId"]
         assert actual["security"] == [{"BearerAuth": []}]

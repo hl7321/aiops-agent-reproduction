@@ -16,6 +16,7 @@ from super_ai.knowledge.models import KnowledgeDocumentRecord
 from super_ai.knowledge.repositories import DuplicateActiveDocumentHashError
 from super_ai.memory.extended_sqlite.knowledge_models import KnowledgeDocumentModel
 from super_ai.memory.primitives import new_id, utc_now
+from super_ai.project_config import JsonValue
 
 
 class SqliteKnowledgeDocumentRepository:
@@ -103,6 +104,7 @@ class SqliteKnowledgeDocumentRepository:
         strategy: str,
         max_characters: int | None,
         overlap: int | None,
+        source_metadata: dict[str, JsonValue] | None = None,
     ) -> KnowledgeDocumentRecord:
         now = utc_now()
         model = KnowledgeDocumentModel(
@@ -119,6 +121,7 @@ class SqliteKnowledgeDocumentRepository:
             max_characters=max_characters,
             overlap=overlap,
             indexable_text=extracted.text,
+            source_metadata=source_metadata or {},
             deleted_at=None,
             created_at=now,
             updated_at=now,
@@ -189,6 +192,7 @@ def _record(model: KnowledgeDocumentModel) -> KnowledgeDocumentRecord:
         index_status=cast(DocumentIndexStatus, model.index_status),
         chunking_config=ChunkingConfig.model_validate(values),
         indexable_text=model.indexable_text,
+        source_metadata=model.source_metadata,
         deleted_at=model.deleted_at,
         created_at=model.created_at,
         updated_at=model.updated_at,
