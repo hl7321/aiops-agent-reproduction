@@ -701,9 +701,21 @@ class ReportEvidenceLink(ContractModel):
     position: int = Field(ge=0)
 
 
+def _empty_active_alerts() -> list[ActiveAlert]:
+    return []
+
+
 class CreateDiagnosticRequest(ContractModel):
-    alerts: list[ActiveAlert] = Field(min_length=1, max_length=20)
+    alerts: list[ActiveAlert] = Field(default_factory=_empty_active_alerts, max_length=20)
     query: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def require_query_or_alert(self) -> "CreateDiagnosticRequest":
+        if self.query is not None:
+            self.query = self.query.strip() or None
+        if self.query is None and not self.alerts:
+            raise ValueError("query 与 alerts 至少提供一项")
+        return self
 
 
 class DiagnosticStreamRequest(ContractModel):

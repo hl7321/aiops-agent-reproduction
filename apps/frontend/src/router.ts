@@ -3,11 +3,11 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import WorkspaceLayout from "./layouts/WorkspaceLayout.vue";
 import type { AuthStatus } from "./stores/auth";
+import AiopsView from "./views/AiopsView.vue";
 import ChatView from "./views/ChatView.vue";
 import KnowledgeView from "./views/KnowledgeView.vue";
 import LoginView from "./views/LoginView.vue";
 import McpView from "./views/McpView.vue";
-import PlaceholderView from "./views/PlaceholderView.vue";
 import RegisterView from "./views/RegisterView.vue";
 
 declare module "vue-router" {
@@ -61,8 +61,7 @@ export function createAppRouter(auth: RouterAuth, history: RouterHistory = creat
           {
             path: "aiops",
             name: "aiops",
-            component: PlaceholderView,
-            props: { capability: "AIOps" },
+            component: AiopsView,
             meta: { title: "AIOps" },
           },
           {

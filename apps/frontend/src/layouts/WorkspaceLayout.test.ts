@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import App from "../App.vue";
 import { createAppRouter } from "../router";
+import { useAiopsStore } from "../stores/aiops";
 import { useAuthStore } from "../stores/auth";
 import { useChatStore } from "../stores/chat";
 import { useChatConfigurationStore } from "../stores/chatConfiguration";
@@ -40,6 +41,9 @@ async function mountWorkspace(path: string) {
   }
   if (path === "/mcp") {
     vi.spyOn(useMcpStore(pinia), "initialize").mockResolvedValue(undefined);
+  }
+  if (path === "/aiops") {
+    vi.spyOn(useAiopsStore(pinia), "initialize").mockResolvedValue(undefined);
   }
   const router = createAppRouter(auth, createMemoryHistory());
   await router.push(path);
@@ -76,13 +80,14 @@ describe("WorkspaceLayout", () => {
     wrapper.unmount();
   });
 
-  it("/aiops 不显示会话区域且明确为后续能力", async () => {
+  it("/aiops 不显示会话区域且渲染真实三栏工作区", async () => {
     const { wrapper } = await mountWorkspace("/aiops");
 
     expect(wrapper.find('[aria-label="会话区域"]').exists()).toBe(false);
     expect(wrapper.get("h1").text()).toBe("AIOps");
-    expect(wrapper.text()).toContain("将在后续提案实现");
-    expect(wrapper.get("[data-route-canvas]")).toBeTruthy();
+    expect(wrapper.text()).toContain("智能诊断控制台");
+    expect(wrapper.text()).not.toContain("将在后续提案实现");
+    expect(wrapper.get('[data-route-canvas="aiops"]')).toBeTruthy();
     wrapper.unmount();
   });
 

@@ -84,6 +84,25 @@ async def test_api_requires_authentication(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "AUTH_REQUIRED"
 
 
+async def test_create_from_manual_query_without_alert_or_context(tmp_path: Path) -> None:
+    async with _client(tmp_path) as client:
+        token = await _token(client, "manual@example.com")
+        headers = {"Authorization": f"Bearer {token}"}
+        created = await client.post(
+            "/aiops/diagnostics",
+            json={"query": " 手工排查 checkout 延迟 ", "alerts": []},
+            headers=headers,
+        )
+        rejected = await client.post(
+            "/aiops/diagnostics", json={"query": " ", "alerts": []}, headers=headers
+        )
+    assert created.status_code == 202
+    assert created.json()["data"]["task"]["query"] == "手工排查 checkout 延迟"
+    assert created.json()["data"]["task"]["alerts"] == []
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "VALIDATION_REQUEST_INVALID"
+
+
 async def test_generic_background_cancel_and_retry_reconcile_diagnostic_status(
     tmp_path: Path,
 ) -> None:

@@ -1,0 +1,24 @@
+## MODIFIED Requirements
+
+### Requirement: 工作台提供稳定桌面布局边界
+受保护页面 MUST 使用 WorkspaceLayout，并提供左侧 rail 导航、账号与登出入口、顶栏页面标题、具有文字的服务状态和 edge-to-edge 路由画布。会话区域 MUST 只在 Chat 路由显示；在 `/chat` 时该区域 MUST 连接真实 Chat store 并提供会话列表、新建、切换和删除，Chat 主画布 MUST NOT 再嵌套第二个历史侧栏。其他业务路由 MUST 使用完整业务画布。`/knowledge` MUST 渲染连接真实后端 API 的知识库工作区，`/mcp` MUST 渲染以服务器为事实来源的 MCP 连接管理工作区，`/aiops` MUST 渲染连接真实告警、诊断、证据和 case API/SSE 的三栏桌面控制台。当前验收只面向桌面浏览器，不得新增移动专用抽屉、底部导航或替代流程。
+
+#### Scenario: Chat 显示会话区域
+- **WHEN** 已认证用户进入 `/chat`
+- **THEN** 工作台同时显示 rail、服务端会话列表和 Chat 路由画布，且新建、切换和删除操作调用真实 Chat API
+
+#### Scenario: 非 Chat 页面使用完整画布
+- **WHEN** 已认证用户进入知识库、AIOps 或 MCP 路由
+- **THEN** 工作台保留 rail 和顶栏但不显示会话区域，路由内容占用完整业务画布
+
+#### Scenario: 知识库路由使用真实工作区
+- **WHEN** 已认证用户进入 `/knowledge`
+- **THEN** 路由显示真实知识库工作区并通过共享合同访问服务端数据
+
+#### Scenario: MCP 路由使用真实工作区
+- **WHEN** 已认证用户进入 `/mcp`
+- **THEN** 路由显示真实 MCP 连接列表、编辑与检查交互，不渲染静态演示数据
+
+#### Scenario: 占位页不声称功能完成
+- **WHEN** 已认证用户进入 `/aiops`
+- **THEN** 路由不再显示旧占位说明，而是显示真实告警、诊断历史、持久 timeline、报告、证据链和 case，且不渲染演示数据

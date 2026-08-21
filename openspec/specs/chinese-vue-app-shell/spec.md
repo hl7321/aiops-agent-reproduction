@@ -44,7 +44,7 @@
 - **THEN** 系统建立认证状态并导航到 `/chat`
 
 ### Requirement: 工作台提供稳定桌面布局边界
-受保护页面 MUST 使用 WorkspaceLayout，并提供左侧 rail 导航、账号与登出入口、顶栏页面标题、具有文字的服务状态和 edge-to-edge 路由画布。会话区域 MUST 只在 Chat 路由显示；在 `/chat` 时该区域 MUST 连接真实 Chat store 并提供会话列表、新建、切换和删除，Chat 主画布 MUST NOT 再嵌套第二个历史侧栏。其他业务路由 MUST 使用完整业务画布。`/knowledge` MUST 渲染连接真实后端 API 的知识库工作区，`/mcp` MUST 渲染以服务器为事实来源的 MCP 连接管理工作区；仍未实现的 AIOps 路由 MUST 保持明确占位。当前验收只面向桌面浏览器，不得新增移动专用抽屉、底部导航或替代流程。
+受保护页面 MUST 使用 WorkspaceLayout，并提供左侧 rail 导航、账号与登出入口、顶栏页面标题、具有文字的服务状态和 edge-to-edge 路由画布。会话区域 MUST 只在 Chat 路由显示；在 `/chat` 时该区域 MUST 连接真实 Chat store 并提供会话列表、新建、切换和删除，Chat 主画布 MUST NOT 再嵌套第二个历史侧栏。其他业务路由 MUST 使用完整业务画布。`/knowledge` MUST 渲染连接真实后端 API 的知识库工作区，`/mcp` MUST 渲染以服务器为事实来源的 MCP 连接管理工作区，`/aiops` MUST 渲染连接真实告警、诊断、证据和 case API/SSE 的三栏桌面控制台。当前验收只面向桌面浏览器，不得新增移动专用抽屉、底部导航或替代流程。
 
 #### Scenario: Chat 显示会话区域
 - **WHEN** 已认证用户进入 `/chat`
@@ -63,8 +63,8 @@
 - **THEN** 路由显示真实 MCP 连接列表、编辑与检查交互，不渲染静态演示数据
 
 #### Scenario: 占位页不声称功能完成
-- **WHEN** 用户进入仍未实现产品能力的 AIOps 路由
-- **THEN** 页面明确说明该能力将在后续提案实现且不提供虚假的业务操作
+- **WHEN** 已认证用户进入 `/aiops`
+- **THEN** 路由不再显示旧占位说明，而是显示真实告警、诊断历史、持久 timeline、报告、证据链和 case，且不渲染演示数据
 
 ### Requirement: 受保护客户端数据具有统一清理边界
 系统 SHALL 提供 Pinia store 清理注册机制和内存态 protectedData。401、认证失效和 logout MUST 清理所有已注册受保护 store；Chat、知识库与 AIOps 领域数据 MUST NOT 写入 localStorage。logout SHALL 先尝试撤销服务端 session，并且无论请求结果如何都清理客户端状态。

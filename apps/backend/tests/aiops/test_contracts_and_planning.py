@@ -30,9 +30,13 @@ def test_contracts_publish_diagnostics_and_shared_status() -> None:
     assert "/aiops/diagnostics/{id}:retry" not in paths
 
 
-def test_request_requires_real_alert_and_bounded_progress() -> None:
+def test_request_requires_query_or_real_alert_and_bounded_progress() -> None:
+    request = CreateDiagnosticRequest(alerts=[], query=" 手工排查 checkout ")
+    assert request.query == "手工排查 checkout"
     with pytest.raises(ValueError):
         CreateDiagnosticRequest(alerts=[])
+    with pytest.raises(ValueError):
+        CreateDiagnosticRequest(alerts=[], query="   ")
     with pytest.raises(ValueError):
         TaskStatusData(taskId="task", status="running", progress=101)
 
