@@ -50,6 +50,7 @@ from super_ai.memory.extended_sqlite.diagnostic_repositories import SqliteDiagno
 from super_ai.memory.primitives import dump_json
 from super_ai.project_config import JsonValue
 from super_ai.retrieval.tool import create_knowledge_retrieval_tool
+from super_ai.runtime.logging import log_lifecycle
 from super_ai.tenancy.context import CurrentUser
 
 
@@ -114,6 +115,7 @@ class DiagnosticRuntime:
 
     async def run(self, context: BackgroundJobContext, task_id: str) -> None:
         owner = context.owner_user_id
+        log_lifecycle("aiops.diagnosis", resource_id=task_id, status="running")
         current_user = CurrentUser(owner)
         tools: dict[str, BaseTool] = {}
 

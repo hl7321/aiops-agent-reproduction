@@ -107,6 +107,7 @@ describe("HTTP 合同", () => {
       "SYSTEM_MCP_CONNECTION_FAILED",
       "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
       "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
+      "SYSTEM_UNAVAILABLE",
     ]);
     expect(ERROR_DEFINITIONS.AUTH_REQUIRED).toEqual({
       code: "AUTH_REQUIRED",
@@ -153,6 +154,10 @@ describe("HTTP 合同", () => {
   it("登记四个认证 path 并仅保护 logout 与 me", () => {
     expect(Object.keys(OPENAPI_PATHS)).toEqual([
       "/health",
+      "/ready",
+      "/config/check",
+      "/health/mcp",
+      "/metrics",
       "/aiops/alerts/active",
       "/aiops/diagnostics",
       "/aiops/diagnostics/{id}",

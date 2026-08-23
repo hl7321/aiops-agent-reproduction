@@ -102,6 +102,12 @@
       "category": "system",
       "httpStatus": 503,
       "defaultMessage": "当前没有可用的日志检索工具"
+    },
+    "SYSTEM_UNAVAILABLE": {
+      "code": "SYSTEM_UNAVAILABLE",
+      "category": "system",
+      "httpStatus": 503,
+      "defaultMessage": "运行时依赖暂时不可用"
     }
   },
   "openapi": {
@@ -120,6 +126,29 @@
         "method": "GET",
         "operationId": "getHealth",
         "successData": "FoundationStatus"
+      },
+      "/ready": {
+        "method": "GET",
+        "operationId": "getRuntimeReadiness",
+        "successData": "ReadinessData",
+        "errors": ["SYSTEM_UNAVAILABLE"]
+      },
+      "/config/check": {
+        "method": "GET",
+        "operationId": "checkRuntimeConfiguration",
+        "successData": "ConfigurationCheckData",
+        "errors": ["SYSTEM_UNAVAILABLE"]
+      },
+      "/health/mcp": {
+        "method": "GET",
+        "operationId": "getMcpHealth",
+        "successData": "RuntimeDependencyResult",
+        "errors": ["SYSTEM_UNAVAILABLE"]
+      },
+      "/metrics": {
+        "method": "GET",
+        "operationId": "getProcessMetrics",
+        "successData": "ProcessMetrics"
       },
       "/aiops/alerts/active": {
         "method": "GET",

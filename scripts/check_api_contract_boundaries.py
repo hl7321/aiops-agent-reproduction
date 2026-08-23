@@ -19,6 +19,9 @@ SSE_EVENT_TYPES = frozenset(
         "error",
     }
 )
+BACKEND_CONTRACT_MODULES = frozenset(
+    {"super_ai/api_contracts.py", "super_ai/runtime/models.py"}
+)
 TYPESCRIPT_SSE_TYPE = re.compile(
     r"\btype\s*:\s*(['\"])(?P<value>content\.delta|reasoning\.delta|tool\.call|"
     r"reference\.source|task\.status|report|complete|error)\1"
@@ -51,7 +54,8 @@ def find_violations(root: Path) -> list[str]:
             violations.append(format_violation(root, path, "私有 Auth payload"))
 
     for path in sorted(backend_root.rglob("*.py")) if backend_root.exists() else ():
-        if path.name == "api_contracts.py" or path.name.startswith("test_"):
+        relative = path.relative_to(backend_root).as_posix()
+        if relative in BACKEND_CONTRACT_MODULES or path.name.startswith("test_"):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         literals = {

@@ -27,6 +27,7 @@ ErrorCode: TypeAlias = Literal[
     "SYSTEM_MCP_CONNECTION_FAILED",
     "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
     "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
+    "SYSTEM_UNAVAILABLE",
 ]
 ErrorCategory: TypeAlias = Literal[
     "authentication",
@@ -218,6 +219,12 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         category="system",
         http_status=503,
         default_message="当前没有可用的日志检索工具",
+    ),
+    "SYSTEM_UNAVAILABLE": ErrorDefinition(
+        code="SYSTEM_UNAVAILABLE",
+        category="system",
+        http_status=503,
+        default_message="运行时依赖暂时不可用",
     ),
 }
 

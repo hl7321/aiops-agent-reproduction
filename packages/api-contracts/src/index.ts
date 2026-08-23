@@ -12,6 +12,7 @@ export * from "./knowledge";
 export * from "./knowledge-retrieval";
 export * from "./mcp";
 export * from "./openapi";
+export * from "./runtime";
 export * from "./sse";
 
 /** foundation 健康检查的共享成功数据。 */

@@ -69,6 +69,10 @@ def test_auth_models_and_openapi_manifest_match_contracts() -> None:
     assert openapi["securitySchemes"] == {"BearerAuth": {"type": "http", "scheme": "bearer"}}
     assert set(paths) == {
         "/health",
+        "/ready",
+        "/config/check",
+        "/health/mcp",
+        "/metrics",
         "/aiops/alerts/active",
         "/aiops/diagnostics",
         "/aiops/diagnostics/{id}",

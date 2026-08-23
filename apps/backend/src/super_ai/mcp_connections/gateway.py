@@ -9,6 +9,7 @@ from langchain_core.tools import BaseTool
 
 from super_ai.api_responses import AppError
 from super_ai.mcp_connections.models import McpConnectionTarget
+from super_ai.runtime.logging import log_lifecycle
 
 
 class McpClient(Protocol):
@@ -91,15 +92,24 @@ class LangChainMcpToolGateway:
         return McpToolSet(tuple(tools), frozenset(mcp_names))
 
     async def _discover_target(self, target: McpConnectionTarget) -> list[BaseTool]:
+        log_lifecycle("mcp.discovery", resource_id=target.id, status="running")
         client = self._factory.create(target)
         for attempt in range(target.retries + 1):
             try:
-                return await asyncio.wait_for(
+                tools = await asyncio.wait_for(
                     client.get_tools(server_name=target.name),
                     timeout=target.timeout_seconds,
                 )
+                log_lifecycle("mcp.discovery", resource_id=target.id, status="succeeded")
+                return tools
             except Exception as error:
                 if attempt >= target.retries:
+                    log_lifecycle(
+                        "mcp.discovery",
+                        resource_id=target.id,
+                        status="failed",
+                        category=type(error).__name__,
+                    )
                     raise AppError("SYSTEM_MCP_CONNECTION_FAILED") from error
                 await self._sleep(min(0.1 * (2**attempt), 1.0))
         raise AssertionError("unreachable")

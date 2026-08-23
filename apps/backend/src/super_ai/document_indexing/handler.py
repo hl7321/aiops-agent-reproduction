@@ -17,6 +17,7 @@ from super_ai.memory.extended_sqlite.document_index_task_repositories import (
 from super_ai.memory.extended_sqlite.knowledge_repositories import SqliteKnowledgeDocumentRepository
 from super_ai.memory.primitives import dump_json, utc_now
 from super_ai.memory.sqlite import transaction_scope
+from super_ai.runtime.logging import log_lifecycle
 from super_ai.tenancy.vector_scope import VectorScope
 from super_ai.vector_store.records import VectorChunk
 
@@ -47,6 +48,7 @@ class DocumentIndexHandler:
     async def __call__(self, context: BackgroundJobContext, payload: JsonValue) -> None:
         task_id, kb, document_id = _payload(payload)
         owner = context.owner_user_id
+        log_lifecycle("document.indexing", resource_id=task_id, status="running")
         await context.raise_if_cancelled()
         async with transaction_scope(self._sessions) as session:
             tasks = SqliteDocumentIndexTaskRepository(session)
@@ -86,6 +88,7 @@ class DocumentIndexHandler:
                 raise RuntimeError("Milvus insert 数量与 chunks 不一致")
             await context.raise_if_cancelled()
         except BackgroundJobCancelledError:
+            log_lifecycle("document.indexing", resource_id=task_id, status="cancelled")
             async with transaction_scope(self._sessions) as session:
                 await SqliteDocumentIndexTaskRepository(session).transition(
                     owner, kb, document_id, task_id, "cancelled"
@@ -95,6 +98,12 @@ class DocumentIndexHandler:
                 )
             raise
         except Exception as error:
+            log_lifecycle(
+                "document.indexing",
+                resource_id=task_id,
+                status="failed",
+                category=type(error).__name__,
+            )
             safe = redact_error(str(error), dump_json(payload))
             async with transaction_scope(self._sessions) as session:
                 job = await SqliteBackgroundJobStore(session).get(owner, context.job_id)
@@ -119,6 +128,7 @@ class DocumentIndexHandler:
             await SqliteKnowledgeDocumentRepository(session).set_index_status(
                 owner, kb, document_id, "succeeded", utc_now()
             )
+        log_lifecycle("document.indexing", resource_id=task_id, status="succeeded")
 
 
 def _payload(payload: JsonValue) -> tuple[str, str, str]:

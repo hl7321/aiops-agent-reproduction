@@ -21,6 +21,7 @@ from super_ai.memory.extended_sqlite.background_job_repositories import (
 )
 from super_ai.memory.primitives import utc_now
 from super_ai.memory.sqlite.runtime import transaction_scope
+from super_ai.runtime.logging import log_lifecycle
 
 
 def _utc_now():
@@ -162,15 +163,18 @@ class BackgroundJobWorker:
     async def _succeed(self, job_id: str, worker_id: str) -> None:
         async with transaction_scope(self._session_factory) as session:
             await SqliteBackgroundJobStore(session).succeed(job_id, worker_id, now=_utc_now())
+        log_lifecycle("background_job", resource_id=job_id, status="succeeded")
 
     async def _cancel(self, job_id: str, worker_id: str) -> None:
         async with transaction_scope(self._session_factory) as session:
             await SqliteBackgroundJobStore(session).cancel_execution(
                 job_id, worker_id, now=_utc_now()
             )
+        log_lifecycle("background_job", resource_id=job_id, status="cancelled")
 
     async def _fail(self, job_id: str, worker_id: str, message: str) -> None:
         async with transaction_scope(self._session_factory) as session:
             await SqliteBackgroundJobStore(session).fail_execution(
                 job_id, worker_id, now=_utc_now(), error_message=message
             )
+        log_lifecycle("background_job", resource_id=job_id, status="failed")

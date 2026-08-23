@@ -40,6 +40,9 @@ from super_ai.mcp_connections.router import router as mcp_router
 from super_ai.mcp_connections.settings import ClsMcpServerSettings, load_cls_mcp_server_settings
 from super_ai.memory.config import DatabaseSettings, load_database_settings
 from super_ai.request_id import get_request_id, request_id_middleware
+from super_ai.runtime.checks import ConfiguredRuntimeChecks, RuntimeChecks
+from super_ai.runtime.metrics import ProcessMetricsRegistry
+from super_ai.runtime.router import router as runtime_router
 from super_ai.vector_store.adapter import MilvusVectorStore
 from super_ai.vector_store.config import VectorStoreSettings, load_vector_store_settings
 
@@ -124,6 +127,8 @@ def create_app(
     mcp_gateway: McpToolGateway | None = None,
     cls_mcp_server_settings: ClsMcpServerSettings | None = None,
     alert_settings: PrometheusAlertsSettings | None = None,
+    runtime_checks: RuntimeChecks | None = None,
+    project_config_paths: tuple[Path, Path] | None = None,
 ) -> FastAPI:
     """创建无外部连接副作用的最小 FastAPI 应用。"""
     registry = background_job_registry or HandlerRegistry()
@@ -164,6 +169,9 @@ def create_app(
     app.state.mcp_gateway = mcp_gateway
     app.state.cls_mcp_server_settings = cls_mcp_server_settings or ClsMcpServerSettings()
     app.state.alert_settings = alert_settings or PrometheusAlertsSettings()
+    app.state.runtime_checks = runtime_checks
+    app.state.project_config_paths = project_config_paths
+    app.state.process_metrics = ProcessMetricsRegistry()
     if vector_store_settings is not None:
         knowledge_vector_store = MilvusVectorStore(vector_store_settings)
         app.dependency_overrides[get_knowledge_service] = create_knowledge_service_dependency(
@@ -199,15 +207,31 @@ def create_app(
     app.include_router(aiops_router)
     app.include_router(aiops_cases_router)
     app.include_router(feedback_router)
+    app.include_router(runtime_router)
     return app
 
 
 def create_configured_app(project_path: Path, user_path: Path) -> FastAPI:
     """只从显式本地 JSON 路径组装可执行应用；外部 client 仍由 handler 延迟创建。"""
+    database = load_database_settings(project_path, user_path)
+    llm = load_llm_settings(project_path, user_path)
+    vector_store = load_vector_store_settings(project_path, user_path)
+    cls_mcp = load_cls_mcp_server_settings(project_path, user_path)
     return create_app(
-        load_database_settings(project_path, user_path),
-        llm_settings=load_llm_settings(project_path, user_path),
-        vector_store_settings=load_vector_store_settings(project_path, user_path),
-        cls_mcp_server_settings=load_cls_mcp_server_settings(project_path, user_path),
+        database,
+        llm_settings=llm,
+        vector_store_settings=vector_store,
+        cls_mcp_server_settings=cls_mcp,
         alert_settings=load_alert_settings(project_path, user_path),
+        runtime_checks=ConfiguredRuntimeChecks(database, llm, vector_store, cls_mcp),
+        project_config_paths=(project_path, user_path),
+    )
+
+
+def create_local_app() -> FastAPI:
+    """供主机 uvicorn factory 使用固定且显式的仓库本地 JSON 路径。"""
+    root = Path(__file__).resolve().parents[4]
+    return create_configured_app(
+        root / "config/project.json",
+        root / "config/user.project.json",
     )

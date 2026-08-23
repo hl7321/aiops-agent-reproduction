@@ -26,6 +26,7 @@ from super_ai.memory.extended_sqlite.chat_repositories import SqliteChatReposito
 from super_ai.memory.primitives import new_id
 from super_ai.memory.sqlite import transaction_scope
 from super_ai.project_config import JsonValue
+from super_ai.runtime.logging import log_lifecycle
 from super_ai.tenancy.context import CurrentUser
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,8 @@ class AgentChatStreamService:
         emit: Callable[[SseEvent], Awaitable[None]],
         queue: asyncio.Queue[SseEvent | object],
     ) -> None:
+        turn_id = mapper.context.turn_id
+        log_lifecycle("chat.turn", resource_id=turn_id, status="running")
         try:
             candidate = self._runner_factory(
                 prepared.current_user,
@@ -157,7 +160,14 @@ class AgentChatStreamService:
             for event in mapper.content(result.final_text):
                 await queue.put(event)
             await queue.put(mapper.complete())
+            log_lifecycle("chat.turn", resource_id=turn_id, status="succeeded")
         except Exception as error:
+            log_lifecycle(
+                "chat.turn",
+                resource_id=turn_id,
+                status="failed",
+                category=type(error).__name__,
+            )
             logger.error(
                 "agent chat turn failed error_type=%s validation_issues=%s",
                 type(error).__name__,

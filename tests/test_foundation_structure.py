@@ -78,4 +78,8 @@ def test_infrastructure_and_readmes_state_current_boundary() -> None:
         ROOT / "apps/frontend/README.md",
         ROOT / "packages/api-contracts/README.md",
     )
-    assert all("尚未实现" in path.read_text(encoding="utf-8") for path in readmes)
+    contents = [path.read_text(encoding="utf-8") for path in readmes]
+    assert all("自动化测试" in content or "测试" in content for content in contents)
+    assert "当前已实现" in contents[0]
+    assert all("AIOps 产品流程尚未实现" not in content for content in contents)
+    assert all("实际流式 endpoint 尚未实现" not in content for content in contents)
