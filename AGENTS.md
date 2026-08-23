@@ -105,5 +105,8 @@ git diff --check
 - 所有 proposal、design、spec、tasks 使用简体中文。
 - 先更新规格和任务，再实施；实现完成后必须使用 `$openspec-verify-change` 检查完整性、正确性与设计一致性。
 - `openspec-verify-change` 不能替代工程门禁；修复其 CRITICAL 问题并处理 WARNING 后，仍须运行完整门禁，才能同步 delta specs 并归档。
+- `docs/openspec` 必须保持为指向 `../openspec` 的相对符号链接，WIKI 页面只能通过 VitePress include 引用 artifacts，禁止复制正文。
+- 创建或更新 active change 后必须运行 `$wiki-sync` active；归档并同步主规格后必须运行 `$wiki-sync` archive。skill 当前不可发现时直接运行 `uv run --project apps/backend python scripts/sync_wiki.py <mode>`。
+- WIKI 验收必须分别运行 `uv run --project apps/backend python scripts/sync_wiki.py audit-includes`、`uv run --project apps/backend python scripts/sync_wiki.py audit-counts` 与 `npm run docs:build`；docs build 不能替代 include 审计。
 - 前端以桌面 Web 布局和交互作为验收目标；README 不得声称未实现的产品能力。
 - 使用 Conventional Commits；从零项目不设计 filter-repo 或 force push。

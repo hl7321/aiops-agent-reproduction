@@ -11,7 +11,21 @@
 - `infra`：仅 etcd、MinIO、Milvus、Attu、Alertmanager 五服务 Compose。
 - `scripts`：本地启动与需要显式执行的 fixtures。
 - `openspec`：主规格与归档 change。
-- `docs`：安装、运维、教程与 runbook。
+- `docs`：VitePress WIKI、OpenSpec 导航、安装、运维、教程与 runbook。
+
+## OpenSpec WIKI
+
+`docs/openspec` 是指向仓库 `openspec` 的相对符号链接；WIKI 通过 VitePress include 展示原始 artifacts，不复制正文。创建 active change 后运行 `uv run --project apps/backend python scripts/sync_wiki.py active`，归档后运行 `uv run --project apps/backend python scripts/sync_wiki.py archive --change <change-name>`；全量重建使用 `uv run --project apps/backend python scripts/sync_wiki.py all`。
+
+```bash
+uv run --project apps/backend python scripts/sync_wiki.py audit-includes
+uv run --project apps/backend python scripts/sync_wiki.py audit-counts
+npm run docs:dev
+npm run docs:build
+npm run docs:preview
+```
+
+Windows checkout 必须先启用 Developer Mode 和 Git symlink 支持，不能复制 `openspec` 目录作为 fallback。具体检查见 `docs/setup/windows.md`。
 
 ## 配置
 
@@ -63,6 +77,9 @@ cd ../..
 npm run frontend:typecheck
 npm run frontend:test
 npm run frontend:build
+npm run docs:build
+uv run --project apps/backend python scripts/sync_wiki.py audit-includes
+uv run --project apps/backend python scripts/sync_wiki.py audit-counts
 docker compose -f infra/compose.yaml config
 bash -n scripts/start-local.sh
 git diff --check

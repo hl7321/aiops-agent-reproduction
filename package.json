@@ -17,6 +17,7 @@
     "frontend:build": "npm run build --workspace @super-ai/frontend",
     "frontend:test:secret": "npm run test:secret --workspace @super-ai/frontend",
     "docs:dev": "npm run dev --workspace @super-ai/docs",
-    "docs:build": "npm run build --workspace @super-ai/docs"
+    "docs:build": "npm run build --workspace @super-ai/docs",
+    "docs:preview": "npm run preview --workspace @super-ai/docs"
   }
 }

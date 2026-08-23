@@ -60,7 +60,7 @@ executionEnvironments = [
   { root = "tests/scripts", extraPaths = ["../.."] },
   { root = "src" },
   { root = "tests" },
-  { root = "../../tests" },
+  { root = "../../tests", extraPaths = ["../.."] },
 ]
 stubPath = "typings"
 venvPath = "."
