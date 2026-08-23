@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import scripts.generate_and_upload_cls_logs as cls_script
 from scripts.generate_and_upload_cls_logs import (
     ClsLogUploadError,
     ClsLogUploadSettings,
@@ -19,6 +20,13 @@ from scripts.generate_and_upload_cls_logs import (
 )
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+def _profile_function(name: str) -> Any:
+    function = getattr(cls_script, name, None)
+    if function is None:
+        pytest.fail(f"缺少 profile 行为: {name}")
+    return function
 
 
 def _settings() -> ClsLogUploadSettings:
@@ -291,3 +299,89 @@ with patch('httpx.AsyncClient.__init__', side_effect=AssertionError('http client
 def test_validate_count_accepts_boundaries() -> None:
     assert validate_count(1) == 1
     assert validate_count(100) == 100
+
+
+def test_quant_profile_keeps_legacy_default_and_explicit_count() -> None:
+    generate_profile_records = _profile_function("generate_profile_records")
+
+    def trace_id(index: int) -> str:
+        return f"trace-{index}"
+
+    default_records = generate_profile_records(
+        _settings(),
+        profile="quant",
+        count=None,
+        now=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        trace_id_factory=trace_id,
+    )
+    explicit_records = generate_profile_records(
+        _settings(),
+        profile="quant",
+        count=3,
+        now=datetime(2026, 8, 23, tzinfo=timezone.utc),
+        trace_id_factory=trace_id,
+    )
+
+    assert len(default_records) == 20
+    assert len(explicit_records) == 3
+    assert explicit_records[0]["traceId"] == "trace-0"
+
+
+def test_java_ecommerce_profile_is_fixed_and_correlated() -> None:
+    generate_profile_records = _profile_function("generate_profile_records")
+    records = generate_profile_records(
+        _settings(),
+        profile="java-ecommerce",
+        count=None,
+        now=datetime(2026, 8, 23, tzinfo=timezone.utc),
+    )
+
+    assert len(records) == 10
+    assert records[0]["incident_id"] == "java-ecom-001-payment-gateway-timeout"
+    assert records[0]["service"] == "payment-service"
+    assert records[0]["trace_id"] == records[0]["traceId"]
+    assert records[0]["alertname"] == "PaymentGatewayTimeoutHigh"
+    assert records[0]["sop_id"] == "sop-payment-gateway-timeout"
+
+
+def test_java_profile_rejects_count_before_client_creation() -> None:
+    upload_profile_logs = _profile_function("upload_profile_logs")
+    created = False
+
+    def client_factory(_endpoint: str, _secret_id: str, _secret_key: str) -> _FakeClient:
+        nonlocal created
+        created = True
+        return _FakeClient()
+
+    with pytest.raises(ClsLogUploadError, match="java-ecommerce profile 不接受 count"):
+        upload_profile_logs(
+            _settings(),
+            profile="java-ecommerce",
+            count=10,
+            client_factory=client_factory,
+            group_builder=_fake_group_builder,
+        )
+
+    assert created is False
+
+
+def test_java_profile_uploads_one_group_with_ten_records() -> None:
+    upload_profile_logs = _profile_function("upload_profile_logs")
+    client = _FakeClient()
+
+    def client_factory(_endpoint: str, _secret_id: str, _secret_key: str) -> _FakeClient:
+        return client
+
+    result = upload_profile_logs(
+        _settings(),
+        profile="java-ecommerce",
+        count=None,
+        client_factory=client_factory,
+        group_builder=_fake_group_builder,
+        now=datetime(2026, 8, 23, tzinfo=timezone.utc),
+    )
+
+    assert result.count == 10
+    assert len(client.calls) == 1
+    _, groups = client.calls[0]
+    assert len(groups.logGroupList[0].logs) == 10

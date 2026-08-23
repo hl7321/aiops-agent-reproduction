@@ -195,6 +195,36 @@ def generate_log_records(
     return tuple(records)
 
 
+def generate_profile_records(
+    settings: ClsLogUploadSettings,
+    *,
+    profile: str,
+    count: int | None,
+    now: datetime | None = None,
+    trace_id_factory: TraceIdFactory | None = None,
+) -> tuple[LogRecord, ...]:
+    if profile == "quant":
+        selected_count = 20 if count is None else count
+        return generate_log_records(
+            settings,
+            selected_count,
+            now=now,
+            trace_id_factory=trace_id_factory,
+        )
+    if profile == "java-ecommerce":
+        if count is not None:
+            raise ClsLogUploadError("java-ecommerce profile 不接受 count")
+        module_name = (
+            "scripts.java_ecommerce_aiops_fixtures"
+            if __package__
+            else "java_ecommerce_aiops_fixtures"
+        )
+        module = importlib.import_module(module_name)
+        builder = cast(Callable[..., tuple[LogRecord, ...]], module.build_java_cls_records)
+        return builder(settings.region, now=now)
+    raise ClsLogUploadError("profile 必须是 quant 或 java-ecommerce")
+
+
 def build_log_group_list(records: Sequence[LogRecord]) -> object:
     module = importlib.import_module("tencentcloud.log.cls_pb2")
     factory = cast(_LogGroupListFactory, module.LogGroupList)
@@ -233,18 +263,58 @@ def upload_logs(
     trace_id_factory: TraceIdFactory | None = None,
 ) -> UploadResult:
     selected_count = validate_count(count)
+    records = generate_log_records(
+        settings,
+        selected_count,
+        now=now,
+        trace_id_factory=trace_id_factory,
+    )
+    return _upload_records(
+        settings,
+        records,
+        client_factory=client_factory,
+        group_builder=group_builder,
+    )
+
+
+def upload_profile_logs(
+    settings: ClsLogUploadSettings,
+    *,
+    profile: str,
+    count: int | None,
+    client_factory: ClientFactory = default_client_factory,
+    group_builder: GroupBuilder = build_log_group_list,
+    now: datetime | None = None,
+    trace_id_factory: TraceIdFactory | None = None,
+) -> UploadResult:
+    records = generate_profile_records(
+        settings,
+        profile=profile,
+        count=count,
+        now=now,
+        trace_id_factory=trace_id_factory,
+    )
+    return _upload_records(
+        settings,
+        records,
+        client_factory=client_factory,
+        group_builder=group_builder,
+    )
+
+
+def _upload_records(
+    settings: ClsLogUploadSettings,
+    records: Sequence[LogRecord],
+    *,
+    client_factory: ClientFactory,
+    group_builder: GroupBuilder,
+) -> UploadResult:
     settings.require_upload_ready()
     try:
-        records = generate_log_records(
-            settings,
-            selected_count,
-            now=now,
-            trace_id_factory=trace_id_factory,
-        )
         groups = group_builder(records)
         client = client_factory(settings.endpoint, settings.secret_id, settings.secret_key)
         response = client.put_log_raw(settings.topic_id, groups)
-        return UploadResult(selected_count, response.get_request_id())
+        return UploadResult(len(records), response.get_request_id())
     except ClsLogUploadError:
         raise
     except Exception as error:
@@ -256,14 +326,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="人工生成并上传安全的 CLS 结构化日志")
     parser.add_argument("--project-config", type=Path, default=Path("config/project.json"))
     parser.add_argument("--user-config", type=Path, default=Path("config/user.project.json"))
-    parser.add_argument("--count", type=int, default=20)
+    parser.add_argument("--profile", choices=("quant", "java-ecommerce"), default="quant")
+    parser.add_argument("--count", type=int)
     parser.add_argument("--confirm-target", action="store_true")
     args = parser.parse_args(argv)
     if not args.confirm_target:
         parser.error("真实 CLS 写入必须显式提供 --confirm-target")
     try:
         settings = load_cls_log_upload_settings(args.project_config, args.user_config)
-        result = upload_logs(settings, args.count)
+        result = upload_profile_logs(settings, profile=args.profile, count=args.count)
     except ClsLogUploadError as error:
         parser.error(str(error))
     print(f"uploaded={result.count} requestId={result.request_id}")
