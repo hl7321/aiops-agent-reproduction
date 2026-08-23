@@ -13,7 +13,12 @@ from super_ai.aiops.cases.router import router as aiops_cases_router
 from super_ai.aiops.factory import create_configured_aiops_handler_factory
 from super_ai.aiops.router import router as aiops_router
 from super_ai.alerts.router import router as alerts_router
-from super_ai.alerts.settings import PrometheusAlertsSettings, load_alert_settings
+from super_ai.alerts.settings import (
+    ClsLogUploadSettings,
+    PrometheusAlertsSettings,
+    load_alert_settings,
+    load_cls_log_upload_settings,
+)
 from super_ai.api_contracts import ErrorCode, FoundationStatus, SuccessEnvelope
 from super_ai.api_responses import AppError, error_response, success_response
 from super_ai.auth.router import router as auth_router
@@ -126,6 +131,7 @@ def create_app(
     chat_memory_summarizer: ChatMemorySummarizer | None = None,
     mcp_gateway: McpToolGateway | None = None,
     cls_mcp_server_settings: ClsMcpServerSettings | None = None,
+    cls_log_upload_settings: ClsLogUploadSettings | None = None,
     alert_settings: PrometheusAlertsSettings | None = None,
     runtime_checks: RuntimeChecks | None = None,
     project_config_paths: tuple[Path, Path] | None = None,
@@ -145,6 +151,7 @@ def create_app(
             llm_settings,
             vector_store_settings,
             cls_mcp_server_settings or ClsMcpServerSettings(),
+            cls_log_upload_settings or ClsLogUploadSettings(),
             mcp_gateway,
         )
         if llm_settings is not None and vector_store_settings is not None
@@ -217,11 +224,13 @@ def create_configured_app(project_path: Path, user_path: Path) -> FastAPI:
     llm = load_llm_settings(project_path, user_path)
     vector_store = load_vector_store_settings(project_path, user_path)
     cls_mcp = load_cls_mcp_server_settings(project_path, user_path)
+    cls_log_upload = load_cls_log_upload_settings(project_path, user_path)
     return create_app(
         database,
         llm_settings=llm,
         vector_store_settings=vector_store,
         cls_mcp_server_settings=cls_mcp,
+        cls_log_upload_settings=cls_log_upload,
         alert_settings=load_alert_settings(project_path, user_path),
         runtime_checks=ConfiguredRuntimeChecks(database, llm, vector_store, cls_mcp),
         project_config_paths=(project_path, user_path),

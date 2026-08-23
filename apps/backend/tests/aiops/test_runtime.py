@@ -8,7 +8,13 @@ from langchain_core.tools import BaseTool, tool
 from super_ai.agent_audit.service import AgentToolAuditService
 from super_ai.aiops.cases.service import DiagnosisCasePersistor
 from super_ai.aiops.models import PlanStep
-from super_ai.aiops.planning import PlanDraft, PlanStepDraft, ReplanDraft, ReportDraft
+from super_ai.aiops.planning import (
+    PlanDraft,
+    PlanStepDraft,
+    ReplanDraft,
+    ReportDraft,
+    SearchLogQueryDefaults,
+)
 from super_ai.aiops.runtime import DiagnosticRuntime
 from super_ai.api_contracts import KnowledgeRetrievalToolInput, KnowledgeRetrievalToolOutput
 from super_ai.api_responses import AppError
@@ -53,6 +59,7 @@ class FailingKnowledge(FakeKnowledge):
 class FakeResolver:
     def __init__(self, order: list[str]) -> None:
         self.order = order
+        self.arguments: list[dict[str, object]] = []
 
     async def discover(
         self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
@@ -62,9 +69,24 @@ class FakeResolver:
         self.order.append("mcp")
 
         @tool("SearchLog")
-        async def search_log(query: str) -> dict[str, str]:
+        async def search_log(
+            From: float,
+            To: float,
+            Query: str,
+            Region: str,
+            TopicId: str = "",
+        ) -> dict[str, str]:
             """查询真实测试边界日志。"""
-            return {"message": f"真实日志:{query}", "service": "checkout"}
+            self.arguments.append(
+                {
+                    "From": From,
+                    "To": To,
+                    "Query": Query,
+                    "Region": Region,
+                    "TopicId": TopicId,
+                }
+            )
+            return {"message": f"真实日志:{Query}", "service": "checkout"}
 
         return (search_log,)
 
@@ -134,15 +156,18 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
                 ),
             )
         order: list[str] = []
+        resolver = FakeResolver(order)
         diagnosis = DiagnosticRuntime(
             SqliteDiagnosticStore(runtime.session_factory),
             FakeKnowledge(order),
-            FakeResolver(order),
+            resolver,
             FakeModel(),
             AgentToolAuditService(
                 SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
             ),
             case_persistor=DiagnosisCasePersistor(runtime.session_factory),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
         )
 
         async def not_cancelled() -> bool:
@@ -150,6 +175,15 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
 
         await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
         assert order == ["knowledge", "mcp"]
+        assert resolver.arguments == [
+            {
+                "From": 1_787_476_500_000,
+                "To": 1_787_480_100_000,
+                "Query": "error",
+                "Region": "ap-guangzhou",
+                "TopicId": "topic-real",
+            }
+        ]
         async with transaction_scope(runtime.session_factory) as session:
             repository = SqliteDiagnosticRepository(session)
             saved = await repository.get_task("owner", task.id)
@@ -205,6 +239,8 @@ async def test_missing_search_log_fails_before_planner_model(tmp_path: Path) -> 
             AgentToolAuditService(
                 SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
             ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
         )
 
         async def not_cancelled() -> bool:
@@ -328,6 +364,8 @@ async def test_restore_ignores_checkpoint_from_previous_plan_version(tmp_path: P
             AgentToolAuditService(
                 SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
             ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
         )
 
         async def not_cancelled() -> bool:

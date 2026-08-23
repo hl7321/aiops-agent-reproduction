@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from super_ai.agent_audit.service import AgentToolAuditService
 from super_ai.aiops.cases.service import DiagnosisCasePersistor
-from super_ai.aiops.planning import QwenDiagnosticModel
+from super_ai.aiops.planning import QwenDiagnosticModel, SearchLogQueryDefaults
 from super_ai.aiops.runtime import DiagnosticRuntime
+from super_ai.alerts.settings import ClsLogUploadSettings
 from super_ai.background_jobs.handlers import BackgroundJobContext, BackgroundJobHandler
 from super_ai.llm.config import LlmSettings
 from super_ai.llm.provider import QwenOpenAIProvider
@@ -62,6 +63,7 @@ def create_configured_aiops_handler_factory(
     llm_settings: LlmSettings,
     vector_settings: VectorStoreSettings,
     cls_settings: ClsMcpServerSettings,
+    cls_log_upload_settings: ClsLogUploadSettings,
     gateway: McpToolGateway | None = None,
 ):
     """返回 lifespan factory；外部 client 延迟到真实 job 运行期创建。"""
@@ -91,6 +93,10 @@ def create_configured_aiops_handler_factory(
                 ),
                 case_persistor=DiagnosisCasePersistor(sessions),
                 secret_values=(llm_settings.api_key.get_secret_value(),),
+                search_log_defaults=SearchLogQueryDefaults(
+                    cls_log_upload_settings.region,
+                    cls_log_upload_settings.topic_id,
+                ),
             )
             await runtime.handler()(context, payload)
 

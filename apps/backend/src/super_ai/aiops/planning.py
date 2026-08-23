@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
-from typing import Protocol
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Protocol, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,6 +16,62 @@ from super_ai.api_contracts import DiagnosticReplanAction
 
 MAX_PLAN_STEPS = 8
 MAX_REPLANS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class SearchLogQueryDefaults:
+    region: str
+    topic_id: str
+
+
+def normalize_search_log_arguments(
+    arguments: Mapping[str, JsonValue],
+    *,
+    schema: Mapping[str, object],
+    defaults: SearchLogQueryDefaults,
+    now_ms: Callable[[], int],
+    fallback_query: str,
+) -> dict[str, JsonValue]:
+    """把 Planner 参数收敛到运行时发现的官方 SearchLog JSON Schema。"""
+    raw_properties = schema.get("properties")
+    if not isinstance(raw_properties, dict):
+        raise ValueError("SearchLog 工具缺少可验证的 properties schema")
+    properties = cast(dict[object, object], raw_properties)
+    allowed = {str(key) for key in properties}
+    normalized: dict[str, JsonValue] = {
+        key: value for key, value in arguments.items() if key in allowed
+    }
+    aliases = {
+        "Query": ("query", "logQuery", "q"),
+        "Region": ("region",),
+        "TopicId": ("topicId", "topic_id"),
+        "Limit": ("limit",),
+        "From": ("from",),
+        "To": ("to",),
+    }
+    for canonical, candidates in aliases.items():
+        if canonical not in allowed or canonical in normalized:
+            continue
+        for candidate in candidates:
+            if candidate in arguments:
+                normalized[canonical] = arguments[candidate]
+                break
+
+    current_ms = now_ms()
+    normalized.setdefault("From", current_ms - 60 * 60 * 1000)
+    normalized.setdefault("To", current_ms)
+    normalized.setdefault("Query", fallback_query[:12_000])
+    if defaults.region.strip():
+        normalized.setdefault("Region", defaults.region.strip())
+    if "TopicId" in allowed and defaults.topic_id.strip():
+        normalized.setdefault("TopicId", defaults.topic_id.strip())
+
+    raw_required = schema.get("required", ())
+    required = cast(list[object], raw_required) if isinstance(raw_required, list) else []
+    missing = [str(key) for key in required if isinstance(key, str) and key not in normalized]
+    if missing:
+        raise ValueError(f"SearchLog 参数缺少必填字段: {', '.join(missing)}")
+    return {key: value for key, value in normalized.items() if key in allowed}
 
 
 def _empty_plan_steps() -> list[PlanStepDraft]:

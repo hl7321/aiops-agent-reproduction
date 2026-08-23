@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, TypedDict, cast
 from uuid import uuid4
 
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMissingTypeStubs]
+from pydantic import BaseModel
 
 from super_ai.agent_audit.service import AgentToolAuditService
 from super_ai.aiops.evidence import knowledge_evidence, normalize_tool_evidence
@@ -22,7 +23,10 @@ from super_ai.aiops.planning import (
     MAX_REPLANS,
     DiagnosticModel,
     PlanDraft,
+    SearchLogQueryDefaults,
     find_search_log_tool,
+    is_search_log_tool,
+    normalize_search_log_arguments,
     summarize_evidence,
     validate_plan,
 )
@@ -47,7 +51,7 @@ from super_ai.background_jobs.handlers import (
 )
 from super_ai.background_jobs.security import redact_error
 from super_ai.memory.extended_sqlite.diagnostic_repositories import SqliteDiagnosticStore
-from super_ai.memory.primitives import dump_json
+from super_ai.memory.primitives import dump_json, utc_now
 from super_ai.project_config import JsonValue
 from super_ai.retrieval.tool import create_knowledge_retrieval_tool
 from super_ai.runtime.logging import log_lifecycle
@@ -96,6 +100,8 @@ class DiagnosticRuntime:
         *,
         case_persistor: DiagnosisCaseSink | None = None,
         secret_values: Sequence[str] = (),
+        search_log_defaults: SearchLogQueryDefaults | None = None,
+        now_ms: Callable[[], int] | None = None,
     ) -> None:
         self._store = store
         self._knowledge = knowledge
@@ -104,6 +110,8 @@ class DiagnosticRuntime:
         self._auditor = auditor
         self._case_persistor = case_persistor
         self._secret_values = tuple(value for value in secret_values if value)
+        self._search_log_defaults = search_log_defaults
+        self._now_ms = now_ms or _current_time_ms
 
     def handler(self) -> BackgroundJobHandler:
         async def handle(context: BackgroundJobContext, payload: JsonValue) -> None:
@@ -285,6 +293,21 @@ class DiagnosticRuntime:
             tool = tools.get(plan_step.tool_name)
             if tool is None:
                 raise ValueError(f"计划工具在恢复后不可用: {plan_step.tool_name}")
+            invocation_arguments = plan_step.arguments
+            if is_search_log_tool(plan_step.tool_name) and self._search_log_defaults is not None:
+                invocation_arguments = normalize_search_log_arguments(
+                    plan_step.arguments,
+                    schema=_tool_schema(tool),
+                    defaults=self._search_log_defaults,
+                    now_ms=self._now_ms,
+                    fallback_query=_search_log_fallback_query(task.alerts),
+                )
+                plan_step = PlanStep(
+                    plan_step.position,
+                    plan_step.tool_name,
+                    plan_step.purpose,
+                    invocation_arguments,
+                )
             step = await self._store.call(
                 "start_step", owner, task_id, task.plan_version, plan_step, attempt=1
             )
@@ -295,12 +318,12 @@ class DiagnosticRuntime:
                     "toolCallId": call_id,
                     "toolName": plan_step.tool_name,
                     "lifecycle": "started",
-                    "input": {"argumentKeys": sorted(plan_step.arguments)},
+                    "input": {"argumentKeys": sorted(invocation_arguments)},
                 },
             )
 
             async def invoke() -> object:
-                return await tool.ainvoke(plan_step.arguments)
+                return await tool.ainvoke(invocation_arguments)
 
             try:
                 result = await self._auditor.execute(
@@ -309,7 +332,7 @@ class DiagnosticRuntime:
                     diagnostic_task_id=task_id,
                     tool_call_id=call_id,
                     tool_name=plan_step.tool_name,
-                    arguments=plan_step.arguments,
+                    arguments=invocation_arguments,
                     operation=invoke,
                 )
                 normalized = normalize_tool_evidence(
@@ -335,7 +358,7 @@ class DiagnosticRuntime:
                 )
                 state = {**state, "next_position": state["next_position"] + 1, "last_error": None}
             except Exception as error:
-                safe = self._safe_message(error, plan_step.arguments)
+                safe = self._safe_message(error, invocation_arguments)
                 await self._store.call("finish_step", owner, step.id, "failed", error_message=safe)
                 await emit(
                     SSE_TOOL_CALL_TYPE,
@@ -549,6 +572,33 @@ class DiagnosticRuntime:
 def _diagnostic_query(query: str | None, alerts: Sequence[dict[str, JsonValue]]) -> str:
     alert_names = ", ".join(str(item.get("alertName", "告警")) for item in alerts)
     return (query or f"请检索与这些活跃告警相关的处置 SOP：{alert_names}").strip()
+
+
+def _current_time_ms() -> int:
+    return int(utc_now().timestamp() * 1000)
+
+
+def _tool_schema(tool: BaseTool) -> Mapping[str, object]:
+    schema = tool.args_schema
+    if isinstance(schema, dict):
+        return cast(dict[str, object], schema)
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        model_schema = schema.model_json_schema()
+        return cast(dict[str, object], model_schema)
+    raise ValueError(f"工具 {tool.name} 缺少可验证的 JSON Schema")
+
+
+def _search_log_fallback_query(alerts: Sequence[dict[str, JsonValue]]) -> str:
+    for alert in alerts:
+        labels = alert.get("labels")
+        if not isinstance(labels, dict):
+            continue
+        for key in ("incident_id", "trace_id", "alertname", "service"):
+            value = labels.get(key)
+            if isinstance(value, str) and value.strip():
+                escaped = value.strip().replace("\\", "\\\\").replace('"', '\\"')
+                return f'{key}:"{escaped}"'
+    return "*"
 
 
 def _model_context(

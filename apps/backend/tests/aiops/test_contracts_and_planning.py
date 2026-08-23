@@ -8,7 +8,9 @@ from super_ai.aiops.planning import (
     PlanDraft,
     PlanStepDraft,
     ReportDraft,
+    SearchLogQueryDefaults,
     find_search_log_tool,
+    normalize_search_log_arguments,
     validate_plan,
 )
 from super_ai.aiops.reporting import build_fallback_report, validate_report
@@ -60,6 +62,44 @@ def test_plan_requires_one_registered_search_log() -> None:
             ),
             ("SearchLog", "search_log"),
         )
+
+
+def test_official_search_log_arguments_use_real_schema_and_deployment_defaults() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "From": {"type": "number"},
+            "To": {"type": "number"},
+            "Query": {"type": "string"},
+            "TopicId": {"type": "string"},
+            "Limit": {"type": "number"},
+            "Region": {"type": "string"},
+        },
+        "required": ["From", "To", "Query", "Region"],
+        "additionalProperties": False,
+    }
+
+    normalized = normalize_search_log_arguments(
+        {
+            "logQuery": "trace_id:4a0001",
+            "timeRange": "2026-08-23T10:00:00Z~2026-08-23T10:15:00Z",
+            "limit": 50,
+            "logset": "payment-service",
+        },
+        schema=schema,
+        defaults=SearchLogQueryDefaults(region="ap-guangzhou", topic_id="topic-real"),
+        now_ms=lambda: 1_787_480_100_000,
+        fallback_query='incident_id:"java-ecom-001"',
+    )
+
+    assert normalized == {
+        "From": 1_787_476_500_000,
+        "To": 1_787_480_100_000,
+        "Query": "trace_id:4a0001",
+        "TopicId": "topic-real",
+        "Limit": 50,
+        "Region": "ap-guangzhou",
+    }
 
 
 def test_evidence_rejects_unknown_payload_and_fallback_is_honest() -> None:
