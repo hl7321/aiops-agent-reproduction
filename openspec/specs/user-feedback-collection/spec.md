@@ -3,9 +3,7 @@
 ## Purpose
 
 定义 owner-scoped 结构化用户反馈的持久化、目标归属验证、恢复和前端交互边界，使 Chat 与 AIOps 的真实持久目标能够被安全评价、修改和删除。
-
 ## Requirements
-
 ### Requirement: 反馈数据使用稳定键和有界结构
 
 系统 SHALL 使用 `owner_user_id + target_type + target_id + subject_key` 作为反馈唯一键，其中数据库 `subject_key` 永不为空；无 subject 的目标 SHALL 将其归一化为空串，并在 DTO 中暴露为 `subjectId: null`。`targetType` SHALL 仅允许 `chat_message`、`citation`、`diagnostic_step`、`diagnostic_report`，`rating` SHALL 仅允许 `positive`、`negative`；可选问题类型 `reason` SHALL 仅允许 `incorrect`、`incomplete`、`irrelevant`、`unclear`、`unsafe`、`other`。系统 SHALL trim 文本，将空白文本归一化为 `null`，并将 `comment` 限制为最多 2000 个字符、`correction` 限制为最多 4000 个字符。
@@ -107,3 +105,18 @@
 - **WHEN** 用户登出或认证失效触发 protected store 清理
 - **THEN** feedback store 清空反馈缓存与请求状态
 - **AND** 不删除服务端持久反馈
+
+### Requirement: 报告反馈可作为 owner-scoped 知识提升审批
+当前 owner 对 `diagnostic_report` 的最新持久反馈 SHALL 作为报告提升资格的一部分：只有 `positive` 才表示认可，`negative`、不存在或已删除反馈均不构成认可。提升服务 MUST 重新读取真实 report 与 feedback 并在同一 owner scope 验证，不得相信客户端提交的认可布尔值；反馈本身仍只表达用户评价，提交 positive 不得自动产生外部写入。
+
+#### Scenario: positive feedback 后显式提升
+- **WHEN** owner 保存 positive diagnostic_report feedback，随后单独调用报告提升操作
+- **THEN** 服务端重新验证反馈和报告资格，再决定创建或关联 canonical case
+
+#### Scenario: 修改或删除认可
+- **WHEN** owner 在提升前把 positive 改为 negative 或删除反馈
+- **THEN** 后续提升不再满足审批条件，且反馈操作本身不创建或删除既有知识资产
+
+#### Scenario: 客户端伪造认可
+- **WHEN** 客户端请求提升但没有同 owner 的真实 positive feedback
+- **THEN** 服务端拒绝提升，不接受请求正文中的任意 approval/owner 字段替代持久反馈

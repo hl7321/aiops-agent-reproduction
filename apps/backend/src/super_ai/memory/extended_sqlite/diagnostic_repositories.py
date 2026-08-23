@@ -18,6 +18,8 @@ from super_ai.aiops.models import (
     PlanStep,
     ReportEvidenceLinkRecord,
     ReportMode,
+    ReportTrustState,
+    ToolErrorCategory,
 )
 from super_ai.memory.extended_sqlite.agent_audit_models import AgentToolCallAuditModel
 from super_ai.memory.extended_sqlite.background_job_repositories import SqliteBackgroundJobStore
@@ -150,6 +152,7 @@ class SqliteDiagnosticRepository:
             status="running",
             result_summary=None,
             error_message=None,
+            error_category=None,
             started_at=now,
             completed_at=None,
             created_at=now,
@@ -166,6 +169,7 @@ class SqliteDiagnosticRepository:
         *,
         result_summary: str | None = None,
         error_message: str | None = None,
+        error_category: ToolErrorCategory | None = None,
     ) -> DiagnosticStepRecord | None:
         model = await self._session.scalar(
             select(DiagnosticStepModel).where(
@@ -178,6 +182,7 @@ class SqliteDiagnosticRepository:
         model.status = status
         model.result_summary = result_summary[:1000] if result_summary else None
         model.error_message = error_message[:1000] if error_message else None
+        model.error_category = error_category
         model.completed_at = utc_now()
         await self._session.flush()
         return _step(model)
@@ -314,6 +319,7 @@ class SqliteDiagnosticRepository:
         markdown: str,
         mode: ReportMode,
         uncertainty: bool,
+        trust_state: ReportTrustState = "insufficient_evidence",
     ) -> DiagnosticReportRecord:
         if await self._owned_task(owner_user_id, task_id) is None:
             raise ValueError("诊断任务不存在")
@@ -331,6 +337,7 @@ class SqliteDiagnosticRepository:
             markdown=markdown,
             generation_mode=mode,
             uncertainty=uncertainty,
+            trust_state=trust_state,
             created_at=utc_now(),
         )
         self._session.add(model)
@@ -510,6 +517,7 @@ def _step(model: DiagnosticStepModel) -> DiagnosticStepRecord:
         model.started_at,
         model.completed_at,
         model.created_at,
+        cast(ToolErrorCategory | None, model.error_category),
     )
 
 
@@ -541,6 +549,7 @@ def _report(model: DiagnosticReportModel) -> DiagnosticReportRecord:
         cast(ReportMode, model.generation_mode),
         model.uncertainty,
         model.created_at,
+        cast(ReportTrustState, model.trust_state),
     )
 
 

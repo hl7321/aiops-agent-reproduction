@@ -14,6 +14,7 @@ import type {
 } from "@super-ai/api-contracts";
 
 import { useAiopsStore } from "../stores/aiops";
+import { useUserFeedbackStore } from "../stores/userFeedback";
 import AiopsView from "./AiopsView.vue";
 
 const ALERT: ActiveAlert = {
@@ -35,16 +36,18 @@ const DETAIL: DiagnosticDetailData = {
     id: "step-1", diagnosticTaskId: TASK.id, planVersion: 1, position: 0, attempt: 1,
     toolName: "SearchLog", arguments: {}, status: "succeeded", resultSummary: "找到日志",
     errorMessage: null, startedAt: "now", completedAt: "later", createdAt: "now",
+    errorCategory: null,
   }], report: {
     id: "report-1", diagnosticTaskId: TASK.id, revision: 1,
     markdown: "# 告警分析报告\n<img src=x onerror=alert(1)>\n## 📊 结论\n证据不足，仍存在不确定性。",
-    generationMode: "fallback", uncertainty: true, createdAt: "later",
+    generationMode: "fallback", uncertainty: true, trustState: "insufficient_evidence",
+    createdAt: "later",
   },
 };
 const CHAIN: DiagnosticEvidenceChainData = {
   taskId: TASK.id,
   evidence: [{ id: "e-1", diagnosticTaskId: TASK.id, diagnosticStepId: null, toolCallId: null,
-    kind: "log", source: "CLS", title: "错误日志", summary: "发现超时", content: "private-full-log",
+    kind: "log_context", source: "DescribeLogContext", title: "错误日志上下文", summary: "发现超时前后序列", content: "private-full-log",
     metadata: { secret: "raw-evidence-json" }, observedAt: "now", createdAt: "now" }],
   reportEvidenceLinks: [{ id: "l-1", diagnosticTaskId: TASK.id, reportId: "report-1",
     evidenceId: "e-1", claimKey: "root-cause", section: "根因", position: 0 }],
@@ -54,6 +57,8 @@ const CASE: DiagnosticCase = {
   id: "case-1", ownerUserId: "owner", taskId: TASK.id, reportId: "report-1", documentId: "doc-1",
   indexTaskId: "index-1", alertName: "HighLatency", service: "checkout", keywords: ["timeout"],
   rootCause: "依赖超时", remediation: "检查依赖", summary: "checkout 超时案例", evidenceIds: ["e-1"], createdAt: "now",
+  incidentFingerprint: "incident-v1", knowledgeFingerprint: "knowledge-v1",
+  fingerprintVersion: "v1", promotionStatus: "canonical",
 };
 
 beforeEach(() => setActivePinia(createPinia()));
@@ -85,6 +90,8 @@ describe("AiopsView", () => {
     expect(wrapper.text()).toContain("诊断：已成功 (succeeded)");
     expect(wrapper.text()).toContain("后台任务：已成功 (succeeded)");
     expect(wrapper.text()).toContain("证据不足，仍存在不确定性");
+    expect(wrapper.text()).toContain("证据不足，不可沉淀");
+    expect(wrapper.text()).toContain("log_context");
     expect(wrapper.text()).toContain("来源任务");
     expect(wrapper.text()).toContain("report-1");
     expect(wrapper.find(".aiops-report-scroll").exists()).toBe(true);
@@ -143,5 +150,38 @@ describe("AiopsView", () => {
     expect(router.currentRoute.value.query).toEqual({
       knowledgeBaseId: "kb-owner", documentId: "doc-1",
     });
+  });
+
+  it("只有 verified 且正向反馈的报告可显式提升，并展示相似候选决策", async () => {
+    const feedback = useUserFeedbackStore();
+    feedback.itemsByKey = { "diagnostic_report:report-1:": {
+      id: "feedback-1", targetType: "diagnostic_report", targetId: "report-1", subjectId: null,
+      rating: "positive", reason: null, comment: "已人工验证", correction: null,
+      createdAt: "now", updatedAt: "now",
+    } };
+    const { wrapper, store } = await mountView();
+    store.activeDetail = { ...DETAIL, report: { ...DETAIL.report!, generationMode: "model",
+      uncertainty: false, trustState: "verified_evidence" } };
+    store.promotionCandidates = [{ item: CASE, similarityScore: 0.82 }];
+    store.promoteActive = vi.fn(async () => undefined);
+    store.resolvePromotion = vi.fn(async () => undefined);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("可信证据已验证");
+    await wrapper.get('[data-action="promote-case"]').trigger("click");
+    expect(store.promoteActive).toHaveBeenCalledOnce();
+    expect(wrapper.text()).toContain("相似案例 82%");
+    await wrapper.get('[data-action="merge-case"]').trigger("click");
+    expect(store.resolvePromotion).toHaveBeenCalledWith("merge", CASE.id);
+  });
+
+  it("execution_failed 明确显示失败且不提供提升入口", async () => {
+    const { wrapper, store } = await mountView();
+    store.activeDetail = { ...DETAIL, task: { ...TASK, status: "failed" },
+      report: { ...DETAIL.report!, trustState: "execution_failed" } };
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("执行失败，不可沉淀");
+    expect(wrapper.find('[data-action="promote-case"]').exists()).toBe(false);
   });
 });

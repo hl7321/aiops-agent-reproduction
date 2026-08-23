@@ -5,10 +5,13 @@ from pathlib import Path
 import httpx
 
 from super_ai.aiops.cases.service import DiagnosisCasePersistor
+from super_ai.aiops.models import NewEvidence
 from super_ai.app import create_app
 from super_ai.background_jobs.runtime import WorkerSettings
+from super_ai.feedback.models import FeedbackUpsert
 from super_ai.memory.config import DatabaseSettings
 from super_ai.memory.extended_sqlite.diagnostic_repositories import SqliteDiagnosticRepository
+from super_ai.memory.extended_sqlite.feedback_repositories import SqliteFeedbackRepository
 from super_ai.memory.sqlite import PersistenceRuntime, transaction_scope, upgrade_database
 
 
@@ -48,6 +51,34 @@ async def _successful_report(runtime: PersistenceRuntime, owner: str) -> tuple[s
             "# 告警分析报告\n- 根因结论：上游超时\n- 建议：检查依赖",
             "model",
             False,
+            "verified_evidence",
+        )
+        evidence = await repository.add_evidence(
+            owner,
+            task.id,
+            NewEvidence(
+                kind="log_hit",
+                source="SearchLog",
+                title="Latency 日志命中",
+                summary="上游超时",
+                content="incident_id=inc-api upstream timeout",
+                metadata={"incidentId": "inc-api"},
+            ),
+        )
+        await repository.link_evidence(
+            owner, task.id, report.id, evidence.id, "root-cause", "根因结论", 0
+        )
+        await SqliteFeedbackRepository(session).upsert(
+            owner,
+            FeedbackUpsert(
+                target_type="diagnostic_report",
+                target_id=report.id,
+                subject_key="",
+                rating="positive",
+                reason=None,
+                comment="人工确认结论可信",
+                correction=None,
+            ),
         )
         await repository.transition_task(owner, task.id, "succeeded")
         return task.id, report.id
@@ -98,3 +129,23 @@ async def test_legacy_api_creates_document_and_index_task_but_no_case(tmp_path: 
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "BUSINESS_CONFLICT"
     assert cases == []
+
+
+async def test_promotion_api_is_owner_scoped_and_idempotent(tmp_path: Path) -> None:
+    async with _client(tmp_path / "promotion-api.sqlite3") as (client, runtime):
+        owner, token = await _auth(client, "owner@example.com")
+        _other, other_token = await _auth(client, "other@example.com")
+        task_id, _ = await _successful_report(runtime, owner)
+        path = f"/aiops/diagnostics/{task_id}:promote-to-knowledge"
+        promoted = await client.post(path, headers={"Authorization": f"Bearer {token}"}, json={})
+        repeated = await client.post(path, headers={"Authorization": f"Bearer {token}"}, json={})
+        forbidden = await client.post(
+            path, headers={"Authorization": f"Bearer {other_token}"}, json={}
+        )
+
+    assert promoted.status_code == 200
+    assert promoted.json()["data"]["status"] == "created"
+    assert promoted.json()["data"]["item"]["promotionStatus"] == "canonical"
+    assert repeated.json()["data"]["status"] == "existing"
+    assert repeated.json()["data"]["item"]["id"] == promoted.json()["data"]["item"]["id"]
+    assert forbidden.status_code == 404

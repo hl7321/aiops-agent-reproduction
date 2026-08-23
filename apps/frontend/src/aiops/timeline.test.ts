@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { SseEvent } from "@super-ai/api-contracts";
 
-import { buildLiveTimeline } from "./timeline";
+import type { DiagnosticDetailData } from "@super-ai/api-contracts";
+
+import { buildLiveTimeline, buildPersistentExecutionChain } from "./timeline";
 
 describe("AIOps timeline", () => {
   it("把共享事件映射为 phase，而不创造新状态或泄漏 raw JSON", () => {
@@ -34,5 +36,27 @@ describe("AIOps timeline", () => {
     expect(JSON.stringify(timeline)).not.toContain("raw-report-payload");
     expect(JSON.stringify(timeline)).not.toContain("private-query");
     expect(timeline[1]?.detail).toContain("原始参数与工具输出不会在页面显示");
+  });
+
+  it("持久执行链显示 attempt 与安全错误分类，不显示参数值", () => {
+    const detail = {
+      task: { id: "task", ownerUserId: "owner", status: "failed", query: null, alerts: [],
+        currentPlan: [], planVersion: 1, replanCount: 0, failureCode: "SYSTEM_UNAVAILABLE",
+        failureReason: "schema invalid", createdAt: "now", updatedAt: "now", startedAt: "now",
+        completedAt: "now" },
+      backgroundJob: { id: "job", ownerUserId: "owner", kind: "aiops_diagnosis",
+        resourceType: "diagnostic_task", resourceId: "task", status: "failed", payload: {},
+        attempt: 1, maxAttempts: 3, timeoutSeconds: 600, availableAt: "now", createdAt: "now",
+        updatedAt: "now" },
+      steps: [{ id: "step", diagnosticTaskId: "task", planVersion: 1, position: 0, attempt: 2,
+        toolName: "DescribeLogContext", arguments: { PkgId: "private-value" }, status: "failed",
+        resultSummary: null, errorMessage: "响应结构不兼容", errorCategory: "output_validation",
+        startedAt: "now", completedAt: "now", createdAt: "now" }], report: null,
+    } satisfies DiagnosticDetailData;
+
+    const chain = buildPersistentExecutionChain(detail, null);
+    expect(chain[0]?.summary).toContain("第 2 次尝试");
+    expect(chain[0]?.summary).toContain("output_validation");
+    expect(JSON.stringify(chain)).not.toContain("private-value");
   });
 });

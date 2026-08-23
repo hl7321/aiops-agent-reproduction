@@ -40,6 +40,15 @@ class FakeFeedbackRepository:
         self.items[key] = item
         return item
 
+    async def get_subject(
+        self,
+        owner_user_id: str,
+        target_type: str,
+        target_id: str,
+        subject_key: str,
+    ) -> FeedbackRecord | None:
+        return self.items.get((owner_user_id, target_type, target_id, subject_key))
+
     async def delete(self, owner_user_id: str, feedback_id: str) -> bool:
         for key, item in tuple(self.items.items()):
             if key[0] == owner_user_id and item.id == feedback_id:

@@ -79,7 +79,9 @@ export function buildPersistentExecutionChain(
   const steps = detail.steps.map((step) => item(
     `step:${step.id}`, step.toolName.toLowerCase().includes("report") ? "report" : "executor",
     step.status, `步骤 ${step.position + 1}：${step.toolName}`,
-    step.resultSummary ?? step.errorMessage ?? "等待执行", step.completedAt ?? step.startedAt,
+    `${step.resultSummary ?? step.errorMessage ?? "等待执行"} · 第 ${step.attempt} 次尝试${
+      step.errorCategory === null ? "" : ` · ${step.errorCategory}`
+    }`, step.completedAt ?? step.startedAt,
     true, step.errorMessage,
   ));
   const audits = (chain?.toolAudits ?? []).map((audit) => item(

@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from super_ai.aiops.models import DiagnosticEvidenceRecord, PlanStep
+from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
 from super_ai.api_contracts import DiagnosticReplanAction
 
 MAX_PLAN_STEPS = 8
@@ -33,6 +34,10 @@ def normalize_search_log_arguments(
     fallback_query: str,
 ) -> dict[str, JsonValue]:
     """把 Planner 参数收敛到运行时发现的官方 SearchLog JSON Schema。"""
+    region = defaults.region.strip()
+    topic_id = defaults.topic_id.strip()
+    if not region or not topic_id:
+        raise ValueError("clsLogUpload region/topicId 配置缺失")
     raw_properties = schema.get("properties")
     if not isinstance(raw_properties, dict):
         raise ValueError("SearchLog 工具缺少可验证的 properties schema")
@@ -61,10 +66,10 @@ def normalize_search_log_arguments(
     normalized.setdefault("From", current_ms - 60 * 60 * 1000)
     normalized.setdefault("To", current_ms)
     normalized.setdefault("Query", fallback_query[:12_000])
-    if defaults.region.strip():
-        normalized.setdefault("Region", defaults.region.strip())
-    if "TopicId" in allowed and defaults.topic_id.strip():
-        normalized.setdefault("TopicId", defaults.topic_id.strip())
+    if "Region" in allowed:
+        normalized["Region"] = region
+    if "TopicId" in allowed:
+        normalized["TopicId"] = topic_id
 
     raw_required = schema.get("required", ())
     required = cast(list[object], raw_required) if isinstance(raw_required, list) else []
@@ -90,6 +95,7 @@ class PlanDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     steps: list[PlanStepDraft] = Field(min_length=1, max_length=MAX_PLAN_STEPS)
+    requires_temporal_context: bool = Field(default=False, alias="requiresTemporalContext")
 
 
 class ReplanDraft(BaseModel):
@@ -98,6 +104,12 @@ class ReplanDraft(BaseModel):
     action: DiagnosticReplanAction
     steps: list[PlanStepDraft] = Field(default_factory=_empty_plan_steps)
     reason: str = Field(min_length=1, max_length=500)
+    requires_temporal_context: bool = Field(default=False, alias="requiresTemporalContext")
+
+
+class ToolArgumentRepairDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    arguments: dict[str, JsonValue]
 
 
 class ReportClaimDraft(BaseModel):
@@ -122,7 +134,22 @@ class ReportDraft(BaseModel):
 
 
 class DiagnosticModel(Protocol):
-    async def plan(self, *, context: str, tool_names: Sequence[str]) -> PlanDraft: ...
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft: ...
+
+    async def repair_tool_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        argument_keys: Sequence[str],
+        validation_errors: Sequence[str],
+    ) -> ToolArgumentRepairDraft: ...
 
     async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft: ...
 
@@ -135,7 +162,13 @@ class QwenDiagnosticModel:
     def __init__(self, model: BaseChatModel) -> None:
         self._model = model
 
-    async def plan(self, *, context: str, tool_names: Sequence[str]) -> PlanDraft:
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
         runnable = self._model.with_structured_output(PlanDraft)
         result = await runnable.ainvoke(
             [
@@ -143,12 +176,49 @@ class QwenDiagnosticModel:
                     content=(
                         "你是证据优先的 AIOps Planner。只使用给出的工具，生成 1 到 8 步计划；"
                         "计划必须且只能包含一个真实 SearchLog 类工具步骤。"
+                        "未验证查询先用 query_builder；仅当结论依赖调用顺序、重试、"
+                        "熔断或恢复时才声明 requiresTemporalContext 并在 SearchLog 后使用"
+                        " log_context。"
                     )
                 ),
-                HumanMessage(content=f"可用工具：{list(tool_names)}\n安全上下文：\n{context}"),
+                HumanMessage(
+                    content=(
+                        f"可用能力：{_catalog_payload(tool_catalog)}\n"
+                        f"上次计划校验错误：{list(validation_errors)}\n"
+                        f"安全上下文：\n{context}"
+                    )
+                ),
             ]
         )
         return PlanDraft.model_validate(result)
+
+    async def repair_tool_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        argument_keys: Sequence[str],
+        validation_errors: Sequence[str],
+    ) -> ToolArgumentRepairDraft:
+        runnable = self._model.with_structured_output(ToolArgumentRepairDraft)
+        result = await runnable.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "修正只读 AIOps 工具的非权威参数。只依据允许 Schema 和字段错误；"
+                        "不得生成 Region、TopicId、owner、凭据或跨步骤定位字段。"
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"工具：{_catalog_payload((tool,))}\n"
+                        f"现有参数键：{list(argument_keys)}\n"
+                        f"校验错误：{list(validation_errors)}\n上下文：{context}"
+                    )
+                ),
+            ]
+        )
+        return ToolArgumentRepairDraft.model_validate(result)
 
     async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft:
         runnable = self._model.with_structured_output(ReplanDraft)
@@ -186,7 +256,12 @@ class QwenDiagnosticModel:
         return ReportDraft.model_validate(result)
 
 
-def validate_plan(draft: PlanDraft, registered_tool_names: Sequence[str]) -> tuple[PlanStep, ...]:
+def validate_plan(
+    draft: PlanDraft,
+    registered_tool_names: Sequence[str],
+    *,
+    query_is_trusted: bool = True,
+) -> tuple[PlanStep, ...]:
     registered = set(registered_tool_names)
     steps = tuple(
         PlanStep(index, item.tool_name, item.purpose, item.arguments)
@@ -200,7 +275,47 @@ def validate_plan(draft: PlanDraft, registered_tool_names: Sequence[str]) -> tup
     search_steps = [step for step in steps if is_search_log_tool(step.tool_name)]
     if len(search_steps) != 1:
         raise ValueError("诊断计划必须且只能包含一个真实 SearchLog 类步骤")
+    search_position = search_steps[0].position
+    builders = [step for step in steps if is_query_builder_tool(step.tool_name)]
+    if query_is_trusted and builders:
+        raise ValueError("服务端已有可信 Query，无需重复调用 TextToSearchLogQuery")
+    if not query_is_trusted:
+        if len(builders) != 1 or builders[0].position >= search_position:
+            raise ValueError("未验证 Query 必须先调用一次 TextToSearchLogQuery")
+    contexts = [step for step in steps if is_log_context_tool(step.tool_name)]
+    if draft.requires_temporal_context:
+        if len(contexts) != 1 or contexts[0].position <= search_position:
+            raise ValueError("时序结论必须在 SearchLog 后调用一次 DescribeLogContext")
+    elif contexts:
+        raise ValueError("非时序计划不得为凑步骤调用 DescribeLogContext")
     return steps
+
+
+async def create_validated_plan(
+    model: DiagnosticModel,
+    *,
+    context: str,
+    tool_catalog: Sequence[ToolCapabilityDescriptor],
+    query_is_trusted: bool,
+    max_attempts: int = 3,
+) -> tuple[PlanStep, ...]:
+    if max_attempts < 1 or max_attempts > 3:
+        raise ValueError("Planner 校验纠错次数必须在 1..3")
+    errors: list[str] = []
+    registered_names = tuple(item.name for item in tool_catalog)
+    for _attempt in range(1, max_attempts + 1):
+        draft = await model.plan(
+            context=context,
+            tool_catalog=tool_catalog,
+            validation_errors=tuple(errors),
+        )
+        try:
+            return validate_plan(
+                draft, registered_names, query_is_trusted=query_is_trusted
+            )
+        except ValueError as error:
+            errors.append(str(error)[:500])
+    raise ValueError(f"Planner 三次校验纠错后仍无有效计划: {errors[-1]}")
 
 
 def find_search_log_tool(tool_names: Sequence[str]) -> str | None:
@@ -215,6 +330,30 @@ def find_search_log_tool(tool_names: Sequence[str]) -> str | None:
 def is_search_log_tool(name: str) -> bool:
     normalized = re.sub(r"[_\-\s]+", "", name.casefold())
     return normalized == "searchlog"
+
+
+def is_query_builder_tool(name: str) -> bool:
+    return re.sub(r"[_\-\s]+", "", name.casefold()) == "texttosearchlogquery"
+
+
+def is_log_context_tool(name: str) -> bool:
+    return re.sub(r"[_\-\s]+", "", name.casefold()) == "describelogcontext"
+
+
+def _catalog_payload(
+    catalog: Sequence[ToolCapabilityDescriptor],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "name": item.name,
+            "description": item.description,
+            "inputSchema": item.input_schema,
+            "capability": item.capability,
+            "dependencies": list(item.dependencies),
+            "requiredForProfile": item.required_for_profile,
+        }
+        for item in catalog
+    ]
 
 
 def summarize_evidence(evidence: Sequence[DiagnosticEvidenceRecord]) -> str:

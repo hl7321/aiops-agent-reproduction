@@ -67,8 +67,7 @@ def test_generate_three_bounded_records_without_credentials() -> None:
     assert len(records) == 3
     assert [record["traceId"] for record in records] == ["trace-0", "trace-1", "trace-2"]
     assert all(
-        set(record)
-        == {"region", "service", "severity", "level", "traceId", "timestamp", "message"}
+        set(record) == {"region", "service", "severity", "level", "traceId", "timestamp", "message"}
         for record in records
     )
     assert all(record["region"] == "ap-guangzhou" for record in records)
@@ -257,9 +256,7 @@ def test_sdk_exception_redacts_current_credentials() -> None:
             del topic_id, groups
             raise RuntimeError(f"failed {settings.secret_id} {settings.secret_key}")
 
-    def failing_client_factory(
-        _endpoint: str, _secret_id: str, _secret_key: str
-    ) -> FailingClient:
+    def failing_client_factory(_endpoint: str, _secret_id: str, _secret_key: str) -> FailingClient:
         return FailingClient()
 
     with pytest.raises(ClsLogUploadError) as error:
@@ -336,7 +333,7 @@ def test_java_ecommerce_profile_is_fixed_and_correlated() -> None:
         now=datetime(2026, 8, 23, tzinfo=timezone.utc),
     )
 
-    assert len(records) == 10
+    assert len(records) == 40
     assert records[0]["incident_id"] == "java-ecom-001-payment-gateway-timeout"
     assert records[0]["service"] == "payment-service"
     assert records[0]["trace_id"] == records[0]["traceId"]
@@ -365,7 +362,7 @@ def test_java_profile_rejects_count_before_client_creation() -> None:
     assert created is False
 
 
-def test_java_profile_uploads_one_group_with_ten_records() -> None:
+def test_java_profile_uploads_ten_isolated_context_groups() -> None:
     upload_profile_logs = _profile_function("upload_profile_logs")
     client = _FakeClient()
 
@@ -381,7 +378,18 @@ def test_java_profile_uploads_one_group_with_ten_records() -> None:
         now=datetime(2026, 8, 23, tzinfo=timezone.utc),
     )
 
-    assert result.count == 10
+    assert result.count == 40
     assert len(client.calls) == 1
     _, groups = client.calls[0]
-    assert len(groups.logGroupList[0].logs) == 10
+    assert len(groups.logGroupList) == 10
+    assert [len(group.logs) for group in groups.logGroupList] == [4] * 10
+    for group in groups.logGroupList:
+        incidents = {
+            next(item.value for item in log.contents if item.key == "incident_id")
+            for log in group.logs
+        }
+        flows = {
+            next(item.value for item in log.contents if item.key == "context_flow_id")
+            for log in group.logs
+        }
+        assert len(incidents) == len(flows) == 1

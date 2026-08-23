@@ -59,6 +59,7 @@ def test_p05_adds_no_tenant_specific_migration_revision() -> None:
         "diagnostic_reports",
         "report_evidence_links",
         "graph_checkpoints",
-            "aiops_diagnostic_cases",
-            "user_feedback",
-        }
+        "aiops_diagnostic_cases",
+        "diagnostic_case_sources",
+        "user_feedback",
+    }

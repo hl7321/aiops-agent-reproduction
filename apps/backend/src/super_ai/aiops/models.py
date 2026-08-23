@@ -8,8 +8,28 @@ from super_ai.project_config import JsonValue
 
 DiagnosticStatus: TypeAlias = Literal["accepted", "running", "succeeded", "failed", "cancelled"]
 DiagnosticStepStatus: TypeAlias = Literal["pending", "running", "succeeded", "failed", "cancelled"]
-EvidenceKind: TypeAlias = Literal["alert", "knowledge", "log", "metric"]
+EvidenceKind: TypeAlias = Literal[
+    "alert", "knowledge", "log", "log_hit", "log_context", "query_artifact", "metric"
+]
 ReportMode: TypeAlias = Literal["model", "fallback"]
+ReportTrustState: TypeAlias = Literal[
+    "verified_evidence", "insufficient_evidence", "execution_failed"
+]
+ToolErrorCategory: TypeAlias = Literal[
+    "input_validation",
+    "output_validation",
+    "empty_result",
+    "timeout",
+    "rate_limited",
+    "transport",
+    "provider_unavailable",
+    "configuration",
+    "permission",
+    "owner_scope",
+    "tool_not_allowed",
+    "schema_incompatible",
+    "permanent",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +74,7 @@ class DiagnosticStepRecord:
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+    error_category: ToolErrorCategory | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +117,7 @@ class DiagnosticReportRecord:
     generation_mode: ReportMode
     uncertainty: bool
     created_at: datetime
+    trust_state: ReportTrustState = "insufficient_evidence"
 
 
 @dataclass(frozen=True, slots=True)

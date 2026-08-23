@@ -76,19 +76,33 @@ def test_generated_payloads_keep_correlation_and_are_synthetic() -> None:
     alerts = module.build_java_alertmanager_alerts(now=now)
     sops = module.build_java_sop_documents()
 
-    assert len(logs) == len(alerts) == len(sops) == 10
-    for incident, log, alert, sop in zip(
-        module.JAVA_ECOMMERCE_INCIDENTS, logs, alerts, sops, strict=True
+    assert len(logs) == 40
+    assert len(alerts) == len(sops) == 10
+    for index, (incident, alert, sop) in enumerate(
+        zip(module.JAVA_ECOMMERCE_INCIDENTS, alerts, sops, strict=True)
     ):
-        assert log["incident_id"] == alert["labels"]["incident_id"] == incident.incident_id
-        assert log["trace_id"] == alert["labels"]["trace_id"] == incident.trace_id
-        assert log["service"] == alert["labels"]["service"] == incident.service
-        assert log["alertname"] == alert["labels"]["alertname"] == incident.alertname
-        assert log["sop_id"] == alert["labels"]["sop_id"] == incident.sop_id
-        assert log["rootCause"] == alert["annotations"]["rootCause"] == incident.root_cause
-        assert log["investigation"] == " | ".join(incident.investigation)
-        assert log["recovery"] == " | ".join(incident.recovery)
-        assert log["verification"] == " | ".join(incident.verification)
+        incident_logs = logs[index * 4 : index * 4 + 4]
+        assert [log["context_sequence"] for log in incident_logs] == ["1", "2", "3", "4"]
+        assert [log["event_phase"] for log in incident_logs] == [
+            "baseline",
+            "symptom",
+            "failure",
+            "recovery",
+        ]
+        assert [log["timestamp"] for log in incident_logs] == sorted(
+            log["timestamp"] for log in incident_logs
+        )
+        assert {log["context_flow_id"] for log in incident_logs} == {f"ctx-{incident.incident_id}"}
+        for log in incident_logs:
+            assert log["incident_id"] == alert["labels"]["incident_id"] == incident.incident_id
+            assert log["trace_id"] == alert["labels"]["trace_id"] == incident.trace_id
+            assert log["service"] == alert["labels"]["service"] == incident.service
+            assert log["alertname"] == alert["labels"]["alertname"] == incident.alertname
+            assert log["sop_id"] == alert["labels"]["sop_id"] == incident.sop_id
+            assert log["rootCause"] == alert["annotations"]["rootCause"] == incident.root_cause
+            assert log["investigation"] == " | ".join(incident.investigation)
+            assert log["recovery"] == " | ".join(incident.recovery)
+            assert log["verification"] == " | ".join(incident.verification)
         assert sop.metadata == {
             "knowledgeType": "aiops-sop",
             "incidentId": incident.incident_id,
@@ -106,14 +120,28 @@ def test_generated_payloads_keep_correlation_and_are_synthetic() -> None:
         assert forbidden not in serialized
 
 
+def test_context_flows_are_stable_and_isolated_between_incidents() -> None:
+    module = _fixtures()
+    now = datetime(2026, 8, 23, 8, 0, tzinfo=timezone.utc)
+    first = module.build_java_cls_records("ap-guangzhou", now=now)
+    second = module.build_java_cls_records("ap-guangzhou", now=now)
+
+    assert first == second
+    flow_ids = [record["context_flow_id"] for record in first]
+    assert len(set(flow_ids)) == 10
+    for flow_id in set(flow_ids):
+        flow = [record for record in first if record["context_flow_id"] == flow_id]
+        assert len(flow) == 4
+        assert len({record["incident_id"] for record in flow}) == 1
+        assert len({record["trace_id"] for record in flow}) == 1
+
+
 def test_sop_documents_are_unique_indexable_markdown() -> None:
     module = _fixtures()
     documents = module.build_java_sop_documents()
 
     assert len({document.filename for document in documents}) == 10
-    for incident, document in zip(
-        module.JAVA_ECOMMERCE_INCIDENTS, documents, strict=True
-    ):
+    for incident, document in zip(module.JAVA_ECOMMERCE_INCIDENTS, documents, strict=True):
         assert document.filename == f"{incident.sop_id}.md"
         assert document.content.startswith("# Java 电商故障 SOP：")
         for value in (

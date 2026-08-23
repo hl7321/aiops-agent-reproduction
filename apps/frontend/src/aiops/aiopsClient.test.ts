@@ -26,6 +26,7 @@ describe("aiopsClient", () => {
     await client.cancelBackgroundJob("job/1");
     await client.listCases();
     await client.getCase("case/1");
+    await client.promoteDiagnostic("task/1", { resolution: "merge", candidateCaseId: "case/1" });
     await client.listKnowledgeBases();
 
     expect(calls).toEqual([
@@ -37,6 +38,8 @@ describe("aiopsClient", () => {
       { url: "/background-jobs/job%2F1:cancel", method: "POST" },
       { url: "/aiops/diagnostic-cases", method: "GET" },
       { url: "/aiops/diagnostic-cases/case%2F1", method: "GET" },
+      { url: "/aiops/diagnostics/task%2F1:promote-to-knowledge", method: "POST",
+        body: '{"resolution":"merge","candidateCaseId":"case/1"}' },
       { url: "/knowledge-bases", method: "GET" },
     ]);
   });

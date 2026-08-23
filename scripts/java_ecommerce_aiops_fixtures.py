@@ -210,36 +210,48 @@ JAVA_ECOMMERCE_INCIDENTS: tuple[JavaEcommerceIncident, ...] = (
 )
 
 
-def build_java_cls_records(
-    region: str, *, now: datetime | None = None
-) -> tuple[LogRecord, ...]:
-    timestamp = _utc(now).isoformat().replace("+00:00", "Z")
-    return tuple(
-        {
-            "region": region,
-            "profile": "java-ecommerce",
-            "incident_id": incident.incident_id,
-            "trace_id": incident.trace_id,
-            "traceId": incident.trace_id,
-            "service": incident.service,
-            "alertname": incident.alertname,
-            "sop_id": incident.sop_id,
-            "logger": incident.logger,
-            "exception": incident.exception,
-            "dependency": incident.dependency,
-            "metric": incident.metric,
-            "threshold": incident.threshold,
-            "rootCause": incident.root_cause,
-            "investigation": " | ".join(incident.investigation),
-            "recovery": " | ".join(incident.recovery),
-            "verification": " | ".join(incident.verification),
-            "severity": "critical",
-            "level": "ERROR",
-            "timestamp": timestamp,
-            "message": incident.symptom,
-        }
-        for incident in JAVA_ECOMMERCE_INCIDENTS
+def build_java_cls_records(region: str, *, now: datetime | None = None) -> tuple[LogRecord, ...]:
+    base_time = _utc(now)
+    records: list[LogRecord] = []
+    phases = (
+        ("baseline", "INFO", "依赖调用处于演示基线，开始记录关联链路。"),
+        ("symptom", "WARN", "检测到指标越过演示阈值，故障症状开始出现。"),
+        ("failure", "ERROR", "依赖调用失败并产生本场景异常。"),
+        ("recovery", "INFO", "执行有界恢复动作，等待验证指标回归。"),
     )
+    for incident_index, incident in enumerate(JAVA_ECOMMERCE_INCIDENTS):
+        flow_id = f"ctx-{incident.incident_id}"
+        flow_start = base_time + timedelta(minutes=incident_index)
+        for sequence, (phase, level, phase_message) in enumerate(phases, start=1):
+            timestamp = (flow_start + timedelta(seconds=(sequence - 1) * 5)).isoformat()
+            record = {
+                "region": region,
+                "profile": "java-ecommerce",
+                "incident_id": incident.incident_id,
+                "trace_id": incident.trace_id,
+                "traceId": incident.trace_id,
+                "service": incident.service,
+                "alertname": incident.alertname,
+                "sop_id": incident.sop_id,
+                "logger": incident.logger,
+                "exception": incident.exception,
+                "dependency": incident.dependency,
+                "metric": incident.metric,
+                "threshold": incident.threshold,
+                "rootCause": incident.root_cause,
+                "investigation": " | ".join(incident.investigation),
+                "recovery": " | ".join(incident.recovery),
+                "verification": " | ".join(incident.verification),
+                "context_flow_id": flow_id,
+                "context_sequence": str(sequence),
+                "event_phase": phase,
+                "severity": "critical" if phase == "failure" else "warning",
+                "level": level,
+                "timestamp": timestamp.replace("+00:00", "Z"),
+                "message": f"{phase_message} {incident.symptom}",
+            }
+            records.append(record)
+    return tuple(records)
 
 
 def build_java_alertmanager_alerts(

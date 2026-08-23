@@ -229,22 +229,39 @@ def build_log_group_list(records: Sequence[LogRecord]) -> object:
     module = importlib.import_module("tencentcloud.log.cls_pb2")
     factory = cast(_LogGroupListFactory, module.LogGroupList)
     groups = factory()
-    group = groups.logGroupList.add()
-    group.filename = "super-ai-generated.log"
-    group.source = "super-ai-cls-log-generator"
-    if records:
-        tag = group.logTags.add()
-        tag.key = "region"
-        tag.value = records[0]["region"]
-    for record in records:
-        log = group.logs.add()
-        parsed_time = datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
-        log.time = int(parsed_time.timestamp() * 1_000_000)
-        for key, value in record.items():
-            content = log.contents.add()
-            content.key = key
-            content.value = value
+    for flow_id, flow_records in _context_groups(records):
+        group = groups.logGroupList.add()
+        suffix = flow_id or "generated"
+        group.filename = f"super-ai-{suffix}.log"
+        group.source = "super-ai-cls-log-generator"
+        if flow_records:
+            region_tag = group.logTags.add()
+            region_tag.key = "region"
+            region_tag.value = flow_records[0]["region"]
+        if flow_id:
+            flow_tag = group.logTags.add()
+            flow_tag.key = "context_flow_id"
+            flow_tag.value = flow_id
+        for record in flow_records:
+            log = group.logs.add()
+            parsed_time = datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+            log.time = int(parsed_time.timestamp() * 1_000_000)
+            for key, value in record.items():
+                content = log.contents.add()
+                content.key = key
+                content.value = value
     return groups
+
+
+def _context_groups(records: Sequence[LogRecord]) -> tuple[tuple[str, list[LogRecord]], ...]:
+    """Java fixture 按稳定 flow 分 LogGroup，量化 profile 保持单组兼容。"""
+    if not records or not all(record.get("context_flow_id", "").strip() for record in records):
+        return (("", list(records)),)
+    grouped: dict[str, list[LogRecord]] = {}
+    for record in records:
+        flow_id = record["context_flow_id"].strip()
+        grouped.setdefault(flow_id, []).append(record)
+    return tuple(grouped.items())
 
 
 def default_client_factory(endpoint: str, secret_id: str, secret_key: str) -> _SdkClient:

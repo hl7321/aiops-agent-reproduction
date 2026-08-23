@@ -41,6 +41,8 @@ const CASE: DiagnosticCase = {
   documentId: "doc-1", indexTaskId: "index-1", alertName: "HighLatency",
   service: "checkout", keywords: ["延迟"], rootCause: "依赖变慢", remediation: "检查依赖",
   summary: "checkout 延迟", evidenceIds: [], createdAt: "now",
+  incidentFingerprint: "incident-v1", knowledgeFingerprint: "knowledge-v1",
+  fingerprintVersion: "v1", promotionStatus: "canonical",
 };
 const result = <T>(data: T): ApiResult<T> => ({ data, requestId: "req-aiops" });
 
@@ -55,6 +57,9 @@ function fakeClient(events: readonly SseEvent[] = []): AiopsClient {
     cancelBackgroundJob: vi.fn(async () => result<BackgroundJob>({ ...JOB, status: "cancelled" })),
     listCases: vi.fn(async () => result({ items: [CASE] })),
     getCase: vi.fn(async () => result({ item: CASE })),
+    promoteDiagnostic: vi.fn(async () => result({
+      status: "created" as const, item: CASE, candidates: [],
+    })),
     listKnowledgeBases: vi.fn(async () => result({
       items: [{ id: "kb-1", name: "默认知识库", isDefault: true as const }],
     })),
@@ -151,5 +156,27 @@ describe("AIOps store", () => {
     expect(store.activeAlerts).toEqual([]);
     expect(store.history).toEqual([TASK]);
     expect(store.cases).toEqual([CASE]);
+  });
+
+  it("显式提升可信报告，并保留相似候选供人工 merge 或新建", async () => {
+    const client = fakeClient();
+    client.promoteDiagnostic = vi.fn()
+      .mockResolvedValueOnce(result({ status: "needs_review", item: null,
+        candidates: [{ item: CASE, similarityScore: 0.82 }] }))
+      .mockResolvedValueOnce(result({ status: "merged", item: CASE, candidates: [] }));
+    const store = createAiopsStore({ client })();
+    await store.selectDiagnostic(TASK.id);
+
+    await store.promoteActive();
+    expect(store.promotionCandidates).toEqual([{ item: CASE, similarityScore: 0.82 }]);
+    expect(store.promotionError).toBeNull();
+    await store.resolvePromotion("merge", CASE.id);
+
+    expect(client.promoteDiagnostic).toHaveBeenNthCalledWith(1, TASK.id, {});
+    expect(client.promoteDiagnostic).toHaveBeenNthCalledWith(2, TASK.id, {
+      resolution: "merge", candidateCaseId: CASE.id,
+    });
+    expect(store.selectedCase).toEqual(CASE);
+    expect(store.promotionCandidates).toEqual([]);
   });
 });

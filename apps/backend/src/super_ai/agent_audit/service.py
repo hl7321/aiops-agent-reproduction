@@ -194,6 +194,44 @@ class AgentToolAuditService:
         )
         return result
 
+    async def record_failed_attempt(
+        self,
+        current_user: CurrentUser,
+        *,
+        diagnostic_task_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: dict[str, JsonValue],
+        error_message: str,
+    ) -> None:
+        """为调用前校验失败写一条完整 failed audit，不触发外部工具。"""
+        started = await self._writer.start(
+            current_user.owner_user_id,
+            NewAgentToolCallAudit(
+                tool_call_id=tool_call_id,
+                chat_session_id=None,
+                diagnostic_task_id=diagnostic_task_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                started_at=self._now(),
+            ),
+        )
+        await self._writer.fail(
+            current_user.owner_user_id,
+            started.id,
+            error_message=error_message,
+            completed_at=self._now(),
+            api_key=self._api_key,
+        )
+        logger.info(
+            "agent tool validation failed owner=%s parent=%s tool=%s call=%s argument_keys=%s",
+            current_user.owner_user_id,
+            diagnostic_task_id,
+            tool_name,
+            tool_call_id,
+            ",".join(sorted(arguments)),
+        )
+
 
 def _log_lifecycle(
     current_user: CurrentUser,

@@ -3,9 +3,14 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import manifest from "../contract-manifest.json";
 import type {
   DiagnosticCase,
+  DiagnosticCasePromotionResult,
   DiagnosticCreateData,
   DiagnosticEvidenceChainData,
+  DiagnosticReport,
+  DiagnosticStep,
+  DiagnosticToolErrorCategory,
   DiagnosticTask,
+  PromoteDiagnosticCaseRequest,
   TaskStatusEvent,
 } from "./index";
 import {
@@ -22,12 +27,35 @@ describe("AIOps 诊断共享合同", () => {
     expectTypeOf<DiagnosticEvidenceChainData>().toHaveProperty("reportEvidenceLinks");
   });
 
-  it("定义诊断 case 与三条受保护操作", () => {
+  it("公开 step attempt/错误分类和 report 可信状态", () => {
+    expectTypeOf<DiagnosticStep["attempt"]>().toEqualTypeOf<number>();
+    expectTypeOf<DiagnosticStep["errorCategory"]>()
+      .toEqualTypeOf<DiagnosticToolErrorCategory | null>();
+    expectTypeOf<DiagnosticReport["trustState"]>()
+      .toEqualTypeOf<"verified_evidence" | "insufficient_evidence" | "execution_failed">();
+  });
+
+  it("定义显式提升、精确重复和语义相似候选合同", () => {
+    expectTypeOf<PromoteDiagnosticCaseRequest["resolution"]>()
+      .toEqualTypeOf<"create_new" | "merge" | undefined>();
+    expectTypeOf<DiagnosticCasePromotionResult["status"]>()
+      .toEqualTypeOf<"created" | "existing" | "needs_review" | "merged">();
+    expectTypeOf<DiagnosticCasePromotionResult>().toHaveProperty("candidates");
+  });
+
+  it("定义诊断 case 与四条受保护操作", () => {
     expectTypeOf<DiagnosticCase>().toHaveProperty("indexTaskId");
     expect(AIOPS_CASE_OPERATIONS).toEqual(manifest.openapi.aiopsCaseOperations);
-    expect(AIOPS_CASE_OPERATIONS).toHaveLength(3);
+    expect(AIOPS_CASE_OPERATIONS).toHaveLength(4);
     expect(AIOPS_CASE_OPERATIONS.every((item) => item.security.includes("BearerAuth"))).toBe(true);
     expect(AIOPS_CASE_OPERATIONS[2]?.errors).toContain("VALIDATION_REQUEST_INVALID");
+    expect(AIOPS_CASE_OPERATIONS[3]).toMatchObject({
+      path: "/aiops/diagnostics/{id}:promote-to-knowledge",
+      method: "POST",
+      operationId: "promoteAiopsDiagnosticCase",
+      successData: "DiagnosticCasePromotionResult",
+    });
+    expect(AIOPS_CASE_OPERATIONS[3]?.errors).toContain("BUSINESS_RULE_VIOLATION");
   });
 
   it("登记五个受保护 path 且没有专用 cancel/retry", () => {

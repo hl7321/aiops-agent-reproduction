@@ -88,6 +88,7 @@ class DiagnosticStepModel(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     result_summary: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
@@ -97,7 +98,8 @@ class DiagnosticEvidenceModel(Base):
     __tablename__ = "diagnostic_evidence"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('alert','knowledge','log','metric')", name="ck_diagnostic_evidence_kind"
+            "kind IN ('alert','knowledge','log','log_hit','log_context','query_artifact','metric')",
+            name="ck_diagnostic_evidence_kind",
         ),
         Index(
             "ix_diagnostic_evidence_owner_task_kind",
@@ -135,6 +137,10 @@ class DiagnosticReportModel(Base):
         CheckConstraint(
             "generation_mode IN ('model','fallback')", name="ck_diagnostic_reports_mode"
         ),
+        CheckConstraint(
+            "trust_state IN ('verified_evidence','insufficient_evidence','execution_failed')",
+            name="ck_diagnostic_reports_trust_state",
+        ),
         UniqueConstraint(
             "owner_user_id", "diagnostic_task_id", "revision", name="uq_diagnostic_reports_revision"
         ),
@@ -151,6 +157,9 @@ class DiagnosticReportModel(Base):
     markdown: Mapped[str] = mapped_column(Text(), nullable=False)
     generation_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     uncertainty: Mapped[bool] = mapped_column(Boolean(), nullable=False)
+    trust_state: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="insufficient_evidence"
+    )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utc_now)
 
 

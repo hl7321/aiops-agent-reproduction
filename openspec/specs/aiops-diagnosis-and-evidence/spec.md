@@ -3,9 +3,7 @@
 本能力让每个已认证用户以 durable job 运行可恢复、证据优先的 AIOps 诊断，并把计划、步骤、工具审计、证据、checkpoint、报告及其引用关系规范化保存，确保报告结论只能建立在真实输入和真实工具结果之上。
 
 # AIOps 诊断与证据链规格
-
 ## Requirements
-
 ### Requirement: 诊断由有界可恢复图执行
 系统 SHALL 按 `START→planner→executor→replanner→(executor|report)→END` 执行诊断图。计划步数和重规划次数 MUST 各有明确正数上限；到达上限时 MUST 进入基于已有证据的报告或安全失败，禁止无限循环。每个节点完成后 MUST 持久化 owner-scoped checkpoint，使 worker 在 lease 过期、进程重启或 retry 后从最后一个完整节点恢复，而不是把未完成节点虚构为成功。
 
@@ -22,34 +20,38 @@
 - **THEN** 新 worker 从该 checkpoint 恢复未完成流程，不重复声明已经完成的步骤或丢失已有证据
 
 ### Requirement: Planner 先获取 SOP 并发现 owner 工具
-Planner SHALL 先以当前 owner scope 调用 `knowledge_retrieval` 检索 SOP，再发现当前 user enabled MCP connections 的真实工具，并只根据输入告警、可选 query、SOP 引用和实际注册工具生成有界计划。没有 SOP 结果 MAY 继续，但不得伪造 SOP。最终有效计划 MUST 包含且只包含一个真实 SearchLog 类工具步骤，其他工具步骤也 MUST 引用本 request 已注册工具；模型输出不得扩大 owner 或工具权限。
+Planner SHALL 先以当前 owner scope 调用 `knowledge_retrieval` 检索 SOP，再发现当前 user enabled MCP connections 的真实工具，并将发现结果与 AIOps 只读取证能力 policy 取交集。Planner MUST 只根据输入告警、可选 query、SOP 引用以及交集工具的名称、描述、Schema 摘要和条件依赖生成有界计划。没有 SOP 结果 MAY 继续，但不得伪造 SOP。当前 CLS Profile MUST 恰好包含一个 SearchLog；未验证 Query 才要求先调用 query-builder，只有结论需要日志时序且命中提供定位字段时才要求 DescribeLogContext。其他步骤也 MUST 引用本 request 允许工具；模型输出不得扩大 owner、工具或权威参数权限。
 
 #### Scenario: 有 SOP 且有 SearchLog
-- **WHEN** owner 知识库返回 SOP 引用且 enabled MCP 发现一个 SearchLog 类工具
-- **THEN** 最终计划保存 SOP 引用并恰好包含一个指向该真实工具的日志搜索步骤
+- **WHEN** owner 知识库返回 SOP 且本轮发现并允许 SearchLog
+- **THEN** 最终计划保存 SOP 引用并恰好包含一个真实 SearchLog，其他能力只按查询来源和证据需要加入
 
 #### Scenario: 没有 SOP
-- **WHEN** owner-scoped knowledge retrieval 返回空结果但存在可用 SearchLog 工具
+- **WHEN** owner-scoped knowledge retrieval 返回空结果但存在允许的 SearchLog
 - **THEN** Planner 可继续生成有界计划，并明确记录没有 SOP 证据而不是生成虚假引用
 
 #### Scenario: 缺少 SearchLog 工具
-- **WHEN** 当前 owner 没有发现任何可用 SearchLog 类工具
-- **THEN** 任务以稳定 `SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE` 工具缺失错误失败，不生成日志证据或诊断报告
+- **WHEN** 当前 owner 缺少当前 Profile 必需的 SearchLog
+- **THEN** 任务以稳定 SearchLog 工具缺失错误失败；缺少条件工具只有在本轮条件成立时才构成对应能力不足
 
 #### Scenario: 模型建议未注册工具
-- **WHEN** Planner 模型输出包含未在本 request 注册表中的工具或多个 SearchLog 步骤
-- **THEN** 系统拒绝该计划或在上限内要求重规划，绝不调用未注册工具
+- **WHEN** Planner 输出未发现/未登记工具、多个 SearchLog 或违反本轮成立的条件依赖
+- **THEN** 系统在最多三次内反馈脱敏校验错误要求修正，仍无效则失败且绝不调用该计划
 
 ### Requirement: Executor 和 Replanner 只承认真实结果
-Executor SHALL 只调用当前 owner 的 knowledge retrieval 或本 request 实际发现的 MCP 工具，并为每次调用持久化通用 tool audit。成功工具结果 MUST 转换为规范化证据；失败 MUST 保存安全错误并产生 failed 工具生命周期。Replanner SHALL 只依据计划、已完成步骤和现有证据决定继续、调整或报告，不得把失败步骤改写为成功、生成假工具输出或补造分数。
+Executor SHALL 只调用当前 request 动态发现与 AIOps policy 交集中的工具，并为每次 attempt 持久化通用 tool audit、步骤状态与 checkpoint。所有允许工具输入 MUST 通过各自验证器，成功结果 MUST 先通过工具专属输出 adapter，再转换为中间产物或规范化证据；失败 MUST 保存安全错误分类并产生 failed 生命周期。Replanner SHALL 只依据计划、attempt、已完成步骤、真实证据、缺失能力和待支持 claim 决定继续、选择其他已登记工具或结束。SearchLog 是当前 Profile 的必需运行证据；DescribeLogContext 失败不得被伪造为成功，但只有本轮 claim 需要时序上下文且没有其他满足 policy 的独立证据时，才阻止 verified_evidence。
 
 #### Scenario: 工具成功产生证据
-- **WHEN** Executor 调用真实 SearchLog 或知识工具并获得结果
-- **THEN** 系统保存 completed audit、步骤结果和对应 evidence，且三者通过稳定标识可追溯
+- **WHEN** SearchLog 和本轮计划使用的其他证据工具都通过真实调用与各自输出校验
+- **THEN** 系统保存对应 audits、attempts、typed evidence 和稳定跨步关联，辅助 query artifact 不冒充运行证据
 
 #### Scenario: 工具失败
-- **WHEN** MCP、知识、timeout 或 payload 解析失败
-- **THEN** 系统保存 failed audit/step 和安全错误，Replanner 只能基于其余真实证据继续或报告不确定性
+- **WHEN** DescribeLogContext 在有界尝试后仍失败
+- **THEN** Replanner 可选择其他已登记的真实证据工具；若待支持的时序 claim 最终仍缺少充分证据，报告必须标记 insufficient_evidence 且不可提升，不得伪造上下文成功
+
+#### Scenario: 无上下文仍有充分独立证据
+- **WHEN** 当前 claim 不依赖事件前后顺序，或经过校验的多个日志命中与独立指标证据已满足 evidence policy
+- **THEN** 系统不因未调用 DescribeLogContext 自动判定失败，但仍须把实际使用的 evidence links 交给报告门禁
 
 #### Scenario: 当前 owner 工具隔离
 - **WHEN** 模型试图使用另一个 user 的 MCP connection、知识引用或诊断 task
@@ -120,34 +122,34 @@ Alembic SHALL 管理 `diagnostic_tasks`、`diagnostic_steps`、`diagnostic_evide
 - **THEN** 客户端收到 task.status 的中文 message 与 0..100 progress，不出现未登记 SSE type
 
 ### Requirement: 报告使用固定中文结构和真实 provenance
-报告生成器 SHALL 只把输入告警、真实 SOP 引用、最终计划和已持久化 evidence 提供给模型，并要求输出固定中文 Markdown：`# 告警分析报告`、`## 📋 活跃告警清单`、每条告警对应的 `## 🔍 告警根因分析N`（详情/症状/日志证据/根因结论）、`## 🛠️ 处理方案执行N`（已执行步骤/建议/预期效果），最后为 `## 📊 结论`（整体评估/关键发现/后续建议/风险评估）。每个关键结论 MUST 建立 report_evidence_link；证据不足 MUST 明确不确定性，禁止把建议写成已执行事实。最终 report 保存且 task 进入 succeeded 后，report 节点 MUST 调用独立自动 case 持久化边界；自动持久化失败时本次诊断不得发出成功 complete。
+报告生成器 SHALL 只把输入告警、真实 SOP 引用、最终计划和已持久化且通过合同校验的 evidence 提供给模型，并要求输出既有固定中文 Markdown 结构。每个关键结论 MUST 建立 report_evidence_link。报告 MUST 标记 `verified_evidence|insufficient_evidence|execution_failed` 信任状态；只有当前 Profile 的必需能力和每个 claim 的 evidence policy 均满足、所有确定性 claim 有真实链接且 `uncertainty=false` 时才能标记 `verified_evidence`。工具数量或单一工具名称不得单独决定可信状态。报告持久化不得自动触发案例或知识写入。
 
 #### Scenario: 多告警报告
-- **WHEN** 任务包含两条告警和足够真实证据
-- **THEN** 报告包含两组编号根因分析/处理方案、固定结论结构，并且关键结论分别链接现有 evidence id
+- **WHEN** 任务包含多条告警且每条确定性结论都有完整真实必需证据
+- **THEN** 报告保持固定结构、关键结论链接现有 evidence id，并标记 verified_evidence
 
 #### Scenario: 证据不足
-- **WHEN** 日志或 SOP 证据不能支持确定根因
-- **THEN** 对应根因结论和整体风险明确标注不确定性，不生成无 evidence link 的确定性关键结论
+- **WHEN** 允许生成说明但证据不足以支持根因
+- **THEN** 内容标记 uncertainty 和 insufficient_evidence，不产生可提升的确定性结论
 
 #### Scenario: provenance 指向真实记录
 - **WHEN** 客户端读取 evidence-chain
 - **THEN** 每个 report link 指向同 owner、同 diagnostic task 的现有 evidence，不能链接任意或跨租户记录
 
 #### Scenario: 成功报告触发自动 case
-- **WHEN** report 与 links 已持久化且 task 成功转换为 succeeded
-- **THEN** report 节点触发自动 case/document/index 持久化，成功后才继续发送完成事件
+- **WHEN** 任意信任状态的 report 被持久化
+- **THEN** report 节点不自动创建 case、知识文档或 index task，知识提升等待独立人工认可流程
 
 ### Requirement: 模型失败使用诚实 fallback
-当 report LLM 调用、结构校验或固定标题校验失败时，系统 SHALL 根据已持久化告警、计划、步骤和 evidence 生成同一固定标题结构的中文 fallback。fallback MUST 标记生成方式和不确定性，只引用已有 evidence，不得生成新根因、日志、指标、工具结果或伪造 provenance；若 SearchLog 缺失则任务必须在报告前失败，不能用 fallback 掩盖工具缺失。
+当 report LLM 调用、结构校验或固定标题校验失败时，系统 SHALL 根据已持久化告警、计划、步骤和 evidence 生成不可提升的中文执行说明。说明 MUST 标记 `insufficient_evidence` 或 `execution_failed`、生成方式和不确定性，只引用已有 evidence，不得生成新根因、日志、指标、工具结果或伪造 provenance；SearchLog、配置、授权或 runtime 等不可恢复失败 MUST 使诊断失败，条件证据不足不得被 fallback 改写成 verified_evidence。
 
 #### Scenario: 报告模型失败但已有证据
-- **WHEN** 图已收集真实 evidence 但报告模型调用失败
-- **THEN** 系统保存结构化 fallback 和对应真实 links，任务可成功完成但报告明确标注自动推断受限
+- **WHEN** 已收集部分真实 evidence 但报告模型调用失败
+- **THEN** 系统可保存不可提升的说明和真实 links，但诊断不以可信报告成功完成
 
 #### Scenario: 报告模型失败且无证据
 - **WHEN** 模型失败且没有足以支持根因的 evidence
-- **THEN** fallback 只列告警、已执行步骤和“证据不足，无法确定根因”，不编造任何产品结论
+- **THEN** 说明只列告警、已执行步骤和失败原因，不编造任何产品结论或知识资产
 
 ### Requirement: 诊断输入、错误和日志保持脱敏
 诊断持久输入、event、audit、checkpoint、evidence 和报告 MUST 排除凭据、MCP URL secret、完整未筛选工具 payload 和模型密钥。结构化运行日志只能记录 task/job/tool 名、参数键、状态和耗时，不得记录 query、完整参数值、原始日志全文、prompt 或模型输出。单元测试 MAY 注入 fake provider/MCP 边界，但 fake 结果 MUST 明确是测试 fixture，不能在生产 factory、fallback 或产品报告中生成。

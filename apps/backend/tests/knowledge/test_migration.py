@@ -20,7 +20,7 @@ async def test_knowledge_migration_has_normalized_document_schema(
             columns = await connection.run_sync(_columns)
     finally:
         await engine.dispose()
-    assert revision == "20260821_0013"
+    assert revision == "20260823_0015"
     assert columns == {
         "id",
         "owner_user_id",

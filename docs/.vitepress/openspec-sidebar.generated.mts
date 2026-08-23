@@ -123,6 +123,10 @@ export const openspecSidebar = [
       {
         "text": "2026-08-23-publish-openspec-wiki",
         "link": "/changes/archive/2026-08-23-publish-openspec-wiki/"
+      },
+      {
+        "text": "2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance",
+        "link": "/changes/archive/2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance/"
       }
     ]
   },
@@ -224,6 +228,10 @@ export const openspecSidebar = [
       {
         "text": "runtime-readiness-observability-and-operations",
         "link": "/specs/runtime-readiness-observability-and-operations/"
+      },
+      {
+        "text": "schema-aware-aiops-tool-execution",
+        "link": "/specs/schema-aware-aiops-tool-execution/"
       },
       {
         "text": "sqlite-repository-foundation",

@@ -10,6 +10,13 @@ class FeedbackRepository(Protocol):
         self, owner_user_id: str, target_type: str, target_id: str
     ) -> list[FeedbackRecord]: ...
     async def upsert(self, owner_user_id: str, value: FeedbackUpsert) -> FeedbackRecord: ...
+    async def get_subject(
+        self,
+        owner_user_id: str,
+        target_type: str,
+        target_id: str,
+        subject_key: str,
+    ) -> FeedbackRecord | None: ...
     async def delete(self, owner_user_id: str, feedback_id: str) -> bool: ...
 
 

@@ -2,10 +2,14 @@
 import { Ban, Radio, RotateCw } from "lucide-vue-next";
 import { computed } from "vue";
 
-import type { DiagnosticDetailData } from "@super-ai/api-contracts";
+import type {
+  DiagnosticCasePromotionCandidate,
+  DiagnosticDetailData,
+} from "@super-ai/api-contracts";
 
 import type { AiopsTimelineItem } from "../../aiops/timeline";
 import { renderSafeMarkdown } from "../../chat/renderSafeMarkdown";
+import { useUserFeedbackStore } from "../../stores/userFeedback";
 import UserFeedbackControl from "../feedback/UserFeedbackControl.vue";
 
 const props = defineProps<{
@@ -15,12 +19,36 @@ const props = defineProps<{
   disconnected: boolean;
   streamError: string | null;
   canCancel: boolean;
+  promotionCandidates: readonly DiagnosticCasePromotionCandidate[];
+  promotionError: string | null;
+  promoting: boolean;
 }>();
-defineEmits<{ cancel: []; subscribe: [] }>();
+defineEmits<{
+  cancel: [];
+  subscribe: [];
+  promote: [];
+  resolvePromotion: [resolution: "create_new" | "merge", candidateCaseId: string];
+}>();
+
+const userFeedback = useUserFeedbackStore();
 
 const reportHtml = computed(() => renderSafeMarkdown(props.detail?.report?.markdown ?? ""));
 const diagnosticStatus = computed(() => props.detail?.task.status ?? "未选择");
 const jobStatus = computed(() => props.detail?.backgroundJob.status ?? "未选择");
+const reportTrustLabel = computed(() => {
+  const state = props.detail?.report?.trustState;
+  if (state === "verified_evidence") return "可信证据已验证";
+  if (state === "execution_failed") return "执行失败，不可沉淀";
+  if (state === "insufficient_evidence") return "证据不足，不可沉淀";
+  return "尚无可信报告";
+});
+const positiveApproval = computed(() => {
+  const report = props.detail?.report;
+  return report !== null && report !== undefined
+    && userFeedback.find("diagnostic_report", report.id, null)?.rating === "positive";
+});
+const canPromote = computed(() => props.detail?.report?.trustState === "verified_evidence"
+  && props.detail.report.uncertainty === false && positiveApproval.value);
 
 function phaseLabel(phase: AiopsTimelineItem["phase"]): string {
   return ({ planner: "Planner", executor: "Executor", replanner: "Replanner", report: "Report", task: "任务" })[phase];
@@ -47,7 +75,7 @@ function statusLabel(status: string): string {
 
     <div class="center-body">
       <section class="report-panel">
-        <header><strong>诊断报告</strong><span v-if="detail?.report">{{ detail.report.uncertainty ? "包含不确定性" : "证据已关联" }} · {{ detail.report.generationMode === "fallback" ? "诚实 fallback" : "模型生成" }}</span></header>
+        <header><strong>诊断报告</strong><span v-if="detail?.report">{{ reportTrustLabel }} · {{ detail.report.generationMode === "fallback" ? "诚实 fallback" : "模型生成" }}</span></header>
         <div v-if="detail?.report" class="aiops-report-scroll">
           <div class="markdown-body" v-html="reportHtml" />
           <UserFeedbackControl
@@ -55,6 +83,16 @@ function statusLabel(status: string): string {
             :target-id="detail.report.id"
             :subject-id="null"
           />
+          <section class="promotion-panel" aria-label="可信案例提升">
+            <p v-if="!canPromote">只有可信证据报告且已保存“赞同”反馈后，才可提升为知识案例。</p>
+            <button v-else data-action="promote-case" type="button" :disabled="promoting" @click="$emit('promote')">{{ promoting ? "正在提升" : "提升为知识案例" }}</button>
+            <p v-if="promotionError" role="alert">{{ promotionError }}</p>
+            <article v-for="candidate in promotionCandidates" :key="candidate.item.id" class="promotion-candidate">
+              <strong>相似案例 {{ Math.round(candidate.similarityScore * 100) }}%</strong>
+              <span>{{ candidate.item.summary }}</span>
+              <div><button data-action="merge-case" type="button" :disabled="promoting" @click="$emit('resolvePromotion', 'merge', candidate.item.id)">合并来源</button><button data-action="create-case" type="button" :disabled="promoting" @click="$emit('resolvePromotion', 'create_new', candidate.item.id)">仍创建新案例</button></div>
+            </article>
+          </section>
         </div>
         <div v-else class="blank-report">最终报告将在持久任务成功后显示；失败不会伪装为成功。</div>
       </section>
@@ -75,5 +113,6 @@ function statusLabel(status: string): string {
 
 <style scoped>
 .aiops-column { min-width: 0; min-height: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow: hidden; }.aiops-center { display: grid; grid-template-rows: auto auto minmax(0, 1fr); }.center-heading { min-width: 0; display: flex; justify-content: space-between; gap: 12px; padding: 14px 16px 10px; border-bottom: 1px solid var(--color-border); }.center-heading h2 { max-width: 550px; margin: 2px 0 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }.status-pair { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }.status-pair span { border: 1px solid var(--color-border); border-radius: 999px; padding: 5px 8px; color: var(--color-text-muted); font-size: 10px; }.status-pair strong { color: var(--color-text); }.stream-controls { min-height: 42px; display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-bottom: 1px solid var(--color-border); font-size: 11px; }.stream-controls span { margin-right: auto; display: flex; align-items: center; gap: 5px; }.stream-controls button { min-height: 30px; border: 1px solid var(--color-border); border-radius: 7px; display: inline-flex; align-items: center; gap: 5px; background: white; cursor: pointer; }.stream-warning { color: var(--color-danger); }.muted { color: var(--color-text-muted); }.center-body { min-height: 0; display: grid; grid-template-rows: minmax(240px, 1.15fr) minmax(170px, .85fr); }.report-panel,.timeline-panel { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }.report-panel { border-bottom: 1px solid var(--color-border); }.report-panel > header,.timeline-panel > header { display: flex; justify-content: space-between; padding: 10px 14px; }.report-panel header span,.timeline-panel header span { color: var(--color-text-muted); font-size: 10px; }.aiops-report-scroll,.timeline-scroll { min-height: 0; overflow: auto; }.aiops-report-scroll { padding: 0 18px 20px; line-height: 1.65; }.blank-report { padding: 32px 18px; color: var(--color-text-muted); font-size: 12px; }.timeline-scroll { padding: 0 12px 12px; }.timeline-item { position: relative; border-left: 2px solid #b8cdc7; padding: 6px 0 10px 12px; }.timeline-item[data-status="failed"] { border-left-color: var(--color-danger); }.timeline-item > div { display: flex; align-items: baseline; gap: 7px; }.timeline-item div > span { min-width: 64px; color: var(--color-accent); font-size: 10px; font-weight: 700; }.timeline-item time { margin-left: auto; color: var(--color-text-muted); font-size: 9px; }.timeline-item p { margin: 4px 0 0; color: var(--color-text-muted); font-size: 11px; line-height: 1.5; }.timeline-item details summary { margin-top: 5px; color: var(--color-accent); cursor: pointer; font-size: 10px; }.timeline-empty { padding: 12px 14px; font-size: 11px; }
+.promotion-panel { margin-top: 10px; border-top: 1px solid var(--color-border); padding-top: 10px; font-size: 11px; }.promotion-panel > p { color: var(--color-text-muted); }.promotion-panel [role="alert"] { color: var(--color-danger); }.promotion-panel button { min-height: 30px; border: 1px solid var(--color-border); border-radius: 7px; padding: 5px 8px; background: white; cursor: pointer; }.promotion-candidate { display: grid; gap: 6px; margin-top: 8px; border: 1px solid var(--color-border); border-radius: 8px; padding: 9px; }.promotion-candidate > span { color: var(--color-text-muted); }.promotion-candidate > div { display: flex; gap: 6px; }
 :deep(.markdown-body img) { max-width: 100%; }:deep(.markdown-body pre) { max-width: 100%; overflow: auto; }:deep(.markdown-body table) { display: block; max-width: 100%; overflow: auto; }
 </style>

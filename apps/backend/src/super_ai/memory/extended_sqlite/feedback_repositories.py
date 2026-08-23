@@ -78,6 +78,23 @@ class SqliteFeedbackRepository:
             raise RuntimeError("反馈 upsert 后无法读取记录")
         return _record(model)
 
+    async def get_subject(
+        self,
+        owner_user_id: str,
+        target_type: str,
+        target_id: str,
+        subject_key: str,
+    ) -> FeedbackRecord | None:
+        model = await self._session.scalar(
+            select(UserFeedbackModel).where(
+                UserFeedbackModel.owner_user_id == owner_user_id,
+                UserFeedbackModel.target_type == target_type,
+                UserFeedbackModel.target_id == target_id,
+                UserFeedbackModel.subject_key == subject_key,
+            )
+        )
+        return _record(model) if model is not None else None
+
     async def delete(self, owner_user_id: str, feedback_id: str) -> bool:
         deleted = await self._session.scalar(
             delete(UserFeedbackModel)

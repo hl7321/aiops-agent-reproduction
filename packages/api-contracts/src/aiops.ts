@@ -7,8 +7,33 @@ import type { DocumentIndexTask } from "./document-indexing";
 
 export type DiagnosticStatus = "accepted" | "running" | "succeeded" | "failed" | "cancelled";
 export type DiagnosticStepStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
-export type DiagnosticEvidenceKind = "alert" | "knowledge" | "log" | "metric";
+export type DiagnosticEvidenceKind =
+  | "alert"
+  | "knowledge"
+  | "log"
+  | "log_hit"
+  | "log_context"
+  | "query_artifact"
+  | "metric";
 export type DiagnosticReportGenerationMode = "model" | "fallback";
+export type DiagnosticReportTrustState =
+  | "verified_evidence"
+  | "insufficient_evidence"
+  | "execution_failed";
+export type DiagnosticToolErrorCategory =
+  | "input_validation"
+  | "output_validation"
+  | "empty_result"
+  | "timeout"
+  | "rate_limited"
+  | "transport"
+  | "provider_unavailable"
+  | "configuration"
+  | "permission"
+  | "owner_scope"
+  | "tool_not_allowed"
+  | "schema_incompatible"
+  | "permanent";
 
 export interface DiagnosticPlanStep {
   readonly position: number;
@@ -45,6 +70,7 @@ export interface DiagnosticStep {
   readonly status: DiagnosticStepStatus;
   readonly resultSummary: string | null;
   readonly errorMessage: string | null;
+  readonly errorCategory: DiagnosticToolErrorCategory | null;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
   readonly createdAt: string;
@@ -81,6 +107,7 @@ export interface DiagnosticReport {
   readonly markdown: string;
   readonly generationMode: DiagnosticReportGenerationMode;
   readonly uncertainty: boolean;
+  readonly trustState: DiagnosticReportTrustState;
   readonly createdAt: string;
 }
 
@@ -138,7 +165,27 @@ export interface DiagnosticCase {
   readonly remediation: string;
   readonly summary: string;
   readonly evidenceIds: readonly string[];
+  readonly incidentFingerprint: string | null;
+  readonly knowledgeFingerprint: string | null;
+  readonly fingerprintVersion: string | null;
+  readonly promotionStatus: "legacy" | "canonical";
   readonly createdAt: string;
+}
+
+export interface DiagnosticCasePromotionCandidate {
+  readonly item: DiagnosticCase;
+  readonly similarityScore: number;
+}
+
+export interface PromoteDiagnosticCaseRequest {
+  readonly resolution?: "create_new" | "merge";
+  readonly candidateCaseId?: string;
+}
+
+export interface DiagnosticCasePromotionResult {
+  readonly status: "created" | "existing" | "needs_review" | "merged";
+  readonly item: DiagnosticCase | null;
+  readonly candidates: readonly DiagnosticCasePromotionCandidate[];
 }
 
 export interface DiagnosticCaseListData { readonly items: readonly DiagnosticCase[]; }

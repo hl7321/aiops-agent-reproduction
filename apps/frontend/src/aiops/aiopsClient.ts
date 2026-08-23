@@ -8,7 +8,9 @@ import type {
   DiagnosticDetailData,
   DiagnosticEvidenceChainData,
   DiagnosticListData,
+  DiagnosticCasePromotionResult,
   KnowledgeBaseListData,
+  PromoteDiagnosticCaseRequest,
   SseEvent,
 } from "@super-ai/api-contracts";
 
@@ -25,6 +27,9 @@ export interface AiopsClient {
   cancelBackgroundJob(id: string): Promise<ApiResult<BackgroundJob>>;
   listCases(): Promise<ApiResult<DiagnosticCaseListData>>;
   getCase(id: string): Promise<ApiResult<DiagnosticCaseDetailData>>;
+  promoteDiagnostic(
+    id: string, body: PromoteDiagnosticCaseRequest,
+  ): Promise<ApiResult<DiagnosticCasePromotionResult>>;
   listKnowledgeBases(): Promise<ApiResult<KnowledgeBaseListData>>;
 }
 
@@ -58,6 +63,14 @@ export function createAiopsClient(api: ApiClient, sse: SseClient): AiopsClient {
     listCases: () => api.request<DiagnosticCaseListData>("/aiops/diagnostic-cases"),
     getCase: (id) => api.request<DiagnosticCaseDetailData>(
       `/aiops/diagnostic-cases/${encodeURIComponent(id)}`,
+    ),
+    promoteDiagnostic: (id, body) => api.request<DiagnosticCasePromotionResult>(
+      `/aiops/diagnostics/${encodeURIComponent(id)}:promote-to-knowledge`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
     ),
     listKnowledgeBases: () => api.request<KnowledgeBaseListData>("/knowledge-bases"),
   };

@@ -166,6 +166,7 @@ describe("HTTP 合同", () => {
       "/aiops/diagnostic-cases",
       "/aiops/diagnostic-cases/{id}",
       "/aiops/diagnostics/{id}:save-to-knowledge",
+      "/aiops/diagnostics/{id}:promote-to-knowledge",
       "/auth/register",
       "/auth/login",
       "/auth/logout",

@@ -185,6 +185,10 @@
         "method": "POST", "operationId": "saveAiopsDiagnosticToKnowledge", "successData": "SaveDiagnosisToKnowledgeData",
         "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_CONFLICT", "BUSINESS_RULE_VIOLATION", "VALIDATION_REQUEST_INVALID"]
       },
+      "/aiops/diagnostics/{id}:promote-to-knowledge": {
+        "method": "POST", "operationId": "promoteAiopsDiagnosticCase", "successData": "DiagnosticCasePromotionResult",
+        "security": ["BearerAuth"], "errors": ["AUTH_REQUIRED", "AUTH_FORBIDDEN", "BUSINESS_RESOURCE_NOT_FOUND", "BUSINESS_CONFLICT", "BUSINESS_RULE_VIOLATION", "VALIDATION_REQUEST_INVALID"]
+      },
       "/auth/register": {
         "method": "POST",
         "operationId": "registerUser",
@@ -375,7 +379,8 @@
     "aiopsCaseOperations": [
       {"path":"/aiops/diagnostic-cases","method":"GET","operationId":"listAiopsDiagnosticCases","successData":"DiagnosticCaseListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},
       {"path":"/aiops/diagnostic-cases/{id}","method":"GET","operationId":"getAiopsDiagnosticCase","successData":"DiagnosticCaseDetailData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND"]},
-      {"path":"/aiops/diagnostics/{id}:save-to-knowledge","method":"POST","operationId":"saveAiopsDiagnosticToKnowledge","successData":"SaveDiagnosisToKnowledgeData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT","BUSINESS_RULE_VIOLATION","VALIDATION_REQUEST_INVALID"]}
+      {"path":"/aiops/diagnostics/{id}:save-to-knowledge","method":"POST","operationId":"saveAiopsDiagnosticToKnowledge","successData":"SaveDiagnosisToKnowledgeData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT","BUSINESS_RULE_VIOLATION","VALIDATION_REQUEST_INVALID"]},
+      {"path":"/aiops/diagnostics/{id}:promote-to-knowledge","method":"POST","operationId":"promoteAiopsDiagnosticCase","successData":"DiagnosticCasePromotionResult","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN","BUSINESS_RESOURCE_NOT_FOUND","BUSINESS_CONFLICT","BUSINESS_RULE_VIOLATION","VALIDATION_REQUEST_INVALID"]}
     ],
     "knowledgeOperations": [
       {"path":"/knowledge-bases","method":"GET","operationId":"listKnowledgeBases","successData":"KnowledgeBaseListData","security":["BearerAuth"],"errors":["AUTH_REQUIRED","AUTH_FORBIDDEN"]},

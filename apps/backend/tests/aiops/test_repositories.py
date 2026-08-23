@@ -45,6 +45,27 @@ async def test_repository_is_owner_scoped_and_links_same_task(tmp_path: Path) ->
                 replan_count=0,
             )
             assert planned is not None and planned.plan_version == 1
+            failed_attempt = await repository.start_step(
+                "user-a", task.id, 1, planned.current_plan[0], attempt=1
+            )
+            await repository.finish_step(
+                "user-a",
+                failed_attempt.id,
+                "failed",
+                error_message="timeout: TimeoutException",
+                error_category="timeout",
+            )
+            successful_attempt = await repository.start_step(
+                "user-a", task.id, 1, planned.current_plan[0], attempt=2
+            )
+            await repository.finish_step(
+                "user-a", successful_attempt.id, "succeeded", result_summary="真实调用成功"
+            )
+            attempts = await repository.list_steps("user-a", task.id)
+            assert [(item.attempt, item.error_category) for item in attempts] == [
+                (1, "timeout"),
+                (2, None),
+            ]
             first = await repository.save_checkpoint(
                 "user-a", task.id, "planner", {"nextStepIndex": 0}
             )

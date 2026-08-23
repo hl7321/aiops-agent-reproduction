@@ -24,6 +24,7 @@
 - [qwen-model-providers](./qwen-model-providers/)
 - [reranked-hybrid-knowledge-retrieval](./reranked-hybrid-knowledge-retrieval/)
 - [runtime-readiness-observability-and-operations](./runtime-readiness-observability-and-operations/)
+- [schema-aware-aiops-tool-execution](./schema-aware-aiops-tool-execution/)
 - [sqlite-repository-foundation](./sqlite-repository-foundation/)
 - [tenant-isolation](./tenant-isolation/)
 - [user-authentication](./user-authentication/)

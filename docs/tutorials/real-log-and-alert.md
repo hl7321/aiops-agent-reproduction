@@ -11,6 +11,12 @@
      --profile java-ecommerce --confirm-target
    ```
 
+   Java profile 会写入十个相互隔离的 CLS LogGroup/context flow，每个 incident 四条有序日志，
+   共 40 条。
+   在 CLS 查询页面先按 `incident_id` 查询原始日志；真实 MCP smoke 必须确认 SearchLog 命中
+   返回非空 `Time`、`PkgId`、`PkgLogId`，然后才可用这些定位字段调用
+   DescribeLogContext。不要从日志正文猜测这三个服务端定位字段。
+
 4. 显式向你选择的 Alertmanager 发布告警：
 
    ```bash
@@ -24,6 +30,8 @@
    python scripts/seed_java_ecommerce_aiops_sops.py --confirm-target
    ```
 
-6. 在桌面完成：注册/登录 → 持久 Chat/SSE → 上传 MD/PDF 并索引 → 自主知识/MCP 工具 → 活跃告警 → CLS 诊断 → 证据/报告 → 案例知识 → 反馈。
+6. 在桌面完成：注册/登录 → 持久 Chat/SSE → 上传 MD/PDF 并索引 → 自主知识/MCP 工具 →
+   活跃告警 → CLS 诊断 → SearchLog 原始命中 → 条件需要时 DescribeLogContext → 可信证据报告
+   → 报告正向反馈 → 显式提升案例 → durable 索引 → 再检索。
 
 任一步失败都应停止并查看脱敏错误，不能把部分成功写成完整验收通过。自动 fake transport 测试不等于 CLS、Qwen、Milvus 或官方 MCP 真实连通；缺失项必须记录“未执行”。

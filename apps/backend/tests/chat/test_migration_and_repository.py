@@ -36,7 +36,7 @@ async def test_chat_migration_has_normalized_schema(chat_database_url: str) -> N
     finally:
         await engine.dispose()
 
-    assert revision == "20260821_0013"
+    assert revision == "20260823_0015"
     assert sessions == {
         "id", "owner_user_id", "title", "memory_mode", "memory_summary",
         "compacted_message_count", "context_tokens", "last_compacted_at",

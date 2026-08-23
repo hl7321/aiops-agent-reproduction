@@ -34,7 +34,9 @@ uv run --locked --script scripts/generate_and_upload_cls_logs.py \
   --confirm-target
 ```
 
-固定十场景使用 `java-ecommerce`，不得同时提供 `--count`：
+固定十场景使用 `java-ecommerce`，不得同时提供 `--count`。每个 incident 会上传
+`baseline → symptom → failure → recovery` 四条有序日志，共十条隔离的 context flow、40 条日志；
+每个 flow 使用独立 CLS LogGroup，避免上下文查询跨 incident 串行：
 
 ```bash
 uv run --locked --script scripts/generate_and_upload_cls_logs.py \
@@ -71,9 +73,14 @@ python scripts/seed_java_ecommerce_aiops_sops.py --confirm-target
 
 真实 smoke 不属于普通门禁，必须由用户逐目标确认后按以下顺序人工执行：
 
-1. 上传 `java-ecommerce` CLS profile，并通过用户自己的 CLS 查询确认稳定 incident/trace 可检索。
+1. 上传 `java-ecommerce` CLS profile，并通过用户自己的 CLS 查询确认稳定 incident/trace 可检索；
+   选取原始 SearchLog 命中，确认响应含非空 `Time/PkgId/PkgLogId`。
 2. seed 十份 SOP，确认十个 durable index task 均 succeeded，并通过知识检索确认对应 SOP 命中。
 3. 向用户明确选择的 Alertmanager 发布十条告警，确认 `/aiops/alerts/active` 返回关联 labels。
-4. 从其中一条真实告警发起诊断，核对 SearchLog、知识引用、证据链与报告中的 incident/trace/service/SOP 关联。
+4. 从其中一条真实告警发起诊断，分别验证可信 CQL 直接 SearchLog、自然语言先生成查询再
+   SearchLog；对需要调用顺序或恢复过程的结论，再用命中的 `Time/PkgId/PkgLogId` 调用
+   DescribeLogContext，并核对知识引用、证据链与报告中的 incident/trace/service/SOP 关联。
+5. 只有报告为 `verified_evidence`、不存在不确定性且用户提交正向报告反馈后，才显式提升为
+   canonical case；随后等待 durable indexing 并通过下一轮检索确认命中。
 
 任何目标未确认或真实服务未就绪时都应停止；fake 单测只能证明 payload 和失败边界，不能替代“CLS 可查询、SOP 可检索、诊断端到端成功”的结论。

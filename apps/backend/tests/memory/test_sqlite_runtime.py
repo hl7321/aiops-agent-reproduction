@@ -67,9 +67,10 @@ def test_product_base_registers_only_current_domain_tables() -> None:
         "diagnostic_reports",
         "report_evidence_links",
         "graph_checkpoints",
-            "aiops_diagnostic_cases",
-            "user_feedback",
-        }
+        "aiops_diagnostic_cases",
+        "diagnostic_case_sources",
+        "user_feedback",
+    }
 
 
 @pytest.mark.parametrize(

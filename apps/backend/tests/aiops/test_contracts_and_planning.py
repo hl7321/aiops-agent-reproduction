@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,12 +10,15 @@ from super_ai.aiops.planning import (
     PlanStepDraft,
     ReportDraft,
     SearchLogQueryDefaults,
+    ToolArgumentRepairDraft,
+    create_validated_plan,
     find_search_log_tool,
     normalize_search_log_arguments,
     validate_plan,
 )
 from super_ai.aiops.reporting import build_fallback_report, validate_report
 from super_ai.aiops.router import map_job_event_to_sse
+from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
 from super_ai.api_contracts import ERROR_DEFINITIONS, CreateDiagnosticRequest, TaskStatusData
 from super_ai.app import create_app
 from super_ai.background_jobs.models import BackgroundJobEventRecord
@@ -64,6 +68,133 @@ def test_plan_requires_one_registered_search_log() -> None:
         )
 
 
+def test_plan_requires_query_builder_only_for_untrusted_query() -> None:
+    direct = PlanDraft(
+        steps=[PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={})]
+    )
+    with pytest.raises(ValueError, match="TextToSearchLogQuery"):
+        validate_plan(
+            direct,
+            ("TextToSearchLogQuery", "SearchLog"),
+            query_is_trusted=False,
+        )
+
+    built = PlanDraft(
+        steps=[
+            PlanStepDraft(
+                toolName="TextToSearchLogQuery", purpose="生成查询", arguments={}
+            ),
+            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={}),
+        ]
+    )
+    assert len(
+        validate_plan(
+            built,
+            ("TextToSearchLogQuery", "SearchLog"),
+            query_is_trusted=False,
+        )
+    ) == 2
+    with pytest.raises(ValueError, match="无需重复"):
+        validate_plan(
+            built,
+            ("TextToSearchLogQuery", "SearchLog"),
+            query_is_trusted=True,
+        )
+
+
+def test_temporal_claim_requires_context_after_search() -> None:
+    missing = PlanDraft(
+        requiresTemporalContext=True,
+        steps=[PlanStepDraft(toolName="SearchLog", purpose="查询日志", arguments={})],
+    )
+    with pytest.raises(ValueError, match="DescribeLogContext"):
+        validate_plan(
+            missing,
+            ("SearchLog", "DescribeLogContext"),
+            query_is_trusted=True,
+        )
+
+    valid = PlanDraft(
+        requiresTemporalContext=True,
+        steps=[
+            PlanStepDraft(toolName="SearchLog", purpose="查询日志", arguments={}),
+            PlanStepDraft(
+                toolName="DescribeLogContext", purpose="验证调用时序", arguments={}
+            ),
+        ],
+    )
+    assert [step.tool_name for step in validate_plan(
+        valid,
+        ("SearchLog", "DescribeLogContext"),
+        query_is_trusted=True,
+    )] == ["SearchLog", "DescribeLogContext"]
+
+
+async def test_planner_validation_correction_is_bounded_to_three_attempts() -> None:
+    descriptor = ToolCapabilityDescriptor(
+        name="SearchLog",
+        description="查询日志",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        capability="log_search",
+        artifact_kind="log_hit",
+        read_only=True,
+        dependencies=(),
+        required_for_profile=True,
+    )
+
+    class CorrectingModel:
+        def __init__(self, succeeds: bool) -> None:
+            self.succeeds = succeeds
+            self.errors: list[tuple[str, ...]] = []
+
+        async def plan(
+            self,
+            *,
+            context: str,
+            tool_catalog: Sequence[ToolCapabilityDescriptor],
+            validation_errors: Sequence[str] = (),
+        ) -> PlanDraft:
+            assert context and tool_catalog
+            self.errors.append(tuple(validation_errors))
+            name = "SearchLog" if self.succeeds and len(self.errors) == 3 else "UnknownTool"
+            return PlanDraft(
+                steps=[PlanStepDraft(toolName=name, purpose="查询", arguments={})]
+            )
+
+        async def replan(self, **_kwargs: object):  # pragma: no cover - protocol filler
+            raise AssertionError
+
+        async def repair_tool_arguments(
+            self, **_kwargs: object
+        ) -> ToolArgumentRepairDraft:  # pragma: no cover - protocol filler
+            raise AssertionError
+
+        async def report(self, **_kwargs: object):  # pragma: no cover - protocol filler
+            raise AssertionError
+
+    corrected = CorrectingModel(True)
+    plan = await create_validated_plan(
+        corrected,
+        context="安全上下文",
+        tool_catalog=(descriptor,),
+        query_is_trusted=True,
+    )
+    assert plan[0].tool_name == "SearchLog"
+    assert corrected.errors[0] == ()
+    assert "未注册工具" in corrected.errors[1][0]
+    assert len(corrected.errors) == 3
+
+    never_valid = CorrectingModel(False)
+    with pytest.raises(ValueError, match="三次校验纠错"):
+        await create_validated_plan(
+            never_valid,
+            context="安全上下文",
+            tool_catalog=(descriptor,),
+            query_is_trusted=True,
+        )
+    assert len(never_valid.errors) == 3
+
+
 def test_official_search_log_arguments_use_real_schema_and_deployment_defaults() -> None:
     schema = {
         "type": "object",
@@ -82,6 +213,8 @@ def test_official_search_log_arguments_use_real_schema_and_deployment_defaults()
     normalized = normalize_search_log_arguments(
         {
             "logQuery": "trace_id:4a0001",
+            "Region": "model-region",
+            "TopicId": "model-topic",
             "timeRange": "2026-08-23T10:00:00Z~2026-08-23T10:15:00Z",
             "limit": 50,
             "logset": "payment-service",
@@ -100,6 +233,15 @@ def test_official_search_log_arguments_use_real_schema_and_deployment_defaults()
         "Limit": 50,
         "Region": "ap-guangzhou",
     }
+
+    with pytest.raises(ValueError, match="region/topicId"):
+        normalize_search_log_arguments(
+            {"Query": "*"},
+            schema=schema,
+            defaults=SearchLogQueryDefaults(region="", topic_id=""),
+            now_ms=lambda: 1_787_480_100_000,
+            fallback_query="*",
+        )
 
 
 def test_evidence_rejects_unknown_payload_and_fallback_is_honest() -> None:

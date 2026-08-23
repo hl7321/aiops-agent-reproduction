@@ -57,7 +57,7 @@ async def test_agent_audit_migration_has_normalized_exclusive_parent_schema(
     finally:
         await engine.dispose()
 
-    assert revision == "20260821_0013"
+    assert revision == "20260823_0015"
     assert columns == {
         "id", "owner_user_id", "tool_call_id", "chat_session_id", "diagnostic_task_id",
         "tool_name", "arguments", "status", "result_summary", "error_message",

@@ -620,8 +620,28 @@ class BackgroundJobListData(ContractModel):
 
 DiagnosticStatus: TypeAlias = Literal["accepted", "running", "succeeded", "failed", "cancelled"]
 DiagnosticStepStatus: TypeAlias = Literal["pending", "running", "succeeded", "failed", "cancelled"]
-DiagnosticEvidenceKind: TypeAlias = Literal["alert", "knowledge", "log", "metric"]
+DiagnosticEvidenceKind: TypeAlias = Literal[
+    "alert", "knowledge", "log", "log_hit", "log_context", "query_artifact", "metric"
+]
 DiagnosticReportGenerationMode: TypeAlias = Literal["model", "fallback"]
+DiagnosticReportTrustState: TypeAlias = Literal[
+    "verified_evidence", "insufficient_evidence", "execution_failed"
+]
+DiagnosticToolErrorCategory: TypeAlias = Literal[
+    "input_validation",
+    "output_validation",
+    "empty_result",
+    "timeout",
+    "rate_limited",
+    "transport",
+    "provider_unavailable",
+    "configuration",
+    "permission",
+    "owner_scope",
+    "tool_not_allowed",
+    "schema_incompatible",
+    "permanent",
+]
 
 
 class DiagnosticPlanStep(ContractModel):
@@ -659,6 +679,7 @@ class DiagnosticStep(ContractModel):
     status: DiagnosticStepStatus
     result_summary: str | None = Field(alias="resultSummary")
     error_message: str | None = Field(alias="errorMessage")
+    error_category: DiagnosticToolErrorCategory | None = Field(alias="errorCategory")
     started_at: str | None = Field(alias="startedAt")
     completed_at: str | None = Field(alias="completedAt")
     created_at: str = Field(alias="createdAt")
@@ -695,6 +716,7 @@ class DiagnosticReport(ContractModel):
     markdown: str
     generation_mode: DiagnosticReportGenerationMode = Field(alias="generationMode")
     uncertainty: bool
+    trust_state: DiagnosticReportTrustState = Field(alias="trustState")
     created_at: str = Field(alias="createdAt")
 
 
@@ -766,7 +788,37 @@ class DiagnosticCase(ContractModel):
     remediation: str
     summary: str
     evidence_ids: list[str] = Field(alias="evidenceIds")
+    incident_fingerprint: str | None = Field(alias="incidentFingerprint")
+    knowledge_fingerprint: str | None = Field(alias="knowledgeFingerprint")
+    fingerprint_version: str | None = Field(alias="fingerprintVersion")
+    promotion_status: Literal["legacy", "canonical"] = Field(alias="promotionStatus")
     created_at: str = Field(alias="createdAt")
+
+
+class DiagnosticCasePromotionCandidate(ContractModel):
+    item: DiagnosticCase
+    similarity_score: float = Field(alias="similarityScore", ge=0, le=1)
+
+
+class PromoteDiagnosticCaseRequest(ContractModel):
+    resolution: Literal["create_new", "merge"] | None = None
+    candidate_case_id: str | None = Field(
+        default=None, alias="candidateCaseId", min_length=1, max_length=32
+    )
+
+    @model_validator(mode="after")
+    def validate_resolution_candidate(self) -> "PromoteDiagnosticCaseRequest":
+        if self.resolution == "merge" and self.candidate_case_id is None:
+            raise ValueError("merge 必须提供 candidateCaseId")
+        if self.resolution != "merge" and self.candidate_case_id is not None:
+            raise ValueError("只有 merge 可提供 candidateCaseId")
+        return self
+
+
+class DiagnosticCasePromotionResult(ContractModel):
+    status: Literal["created", "existing", "needs_review", "merged"]
+    item: DiagnosticCase | None
+    candidates: list[DiagnosticCasePromotionCandidate]
 
 
 class DiagnosticCaseListData(ContractModel):

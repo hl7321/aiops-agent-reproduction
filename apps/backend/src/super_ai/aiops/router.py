@@ -336,6 +336,7 @@ def _step(record: DiagnosticStepRecord) -> DiagnosticStep:
         status=record.status,
         resultSummary=record.result_summary,
         errorMessage=record.error_message,
+        errorCategory=record.error_category,
         startedAt=_timestamp(record.started_at),
         completedAt=_timestamp(record.completed_at),
         createdAt=_timestamp(record.created_at) or "",
@@ -367,6 +368,7 @@ def _report(record: DiagnosticReportRecord) -> DiagnosticReport:
         markdown=record.markdown,
         generationMode=record.generation_mode,
         uncertainty=record.uncertainty,
+        trustState=record.trust_state,
         createdAt=_timestamp(record.created_at) or "",
     )
 

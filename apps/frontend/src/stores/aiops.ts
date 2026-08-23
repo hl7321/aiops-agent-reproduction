@@ -4,6 +4,7 @@ import { computed, ref, shallowRef } from "vue";
 import type {
   ActiveAlert,
   DiagnosticCase,
+  DiagnosticCasePromotionCandidate,
   DiagnosticDetailData,
   DiagnosticEvidenceChainData,
   DiagnosticTask,
@@ -34,6 +35,9 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
     const activeDetail = ref<DiagnosticDetailData | null>(null);
     const evidenceChain = ref<DiagnosticEvidenceChainData | null>(null);
     const selectedCase = ref<DiagnosticCase | null>(null);
+    const promotionCandidates = ref<readonly DiagnosticCasePromotionCandidate[]>([]);
+    const promotionError = ref<string | null>(null);
+    const promoting = ref(false);
     const liveEvents = shallowRef<readonly SseEvent[]>([]);
     const loading = ref(false);
     const creating = ref(false);
@@ -114,6 +118,8 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       lastSequence.value = 0;
       streamDisconnected.value = false;
       streamError.value = null;
+      promotionCandidates.value = [];
+      promotionError.value = null;
     }
 
     async function createDiagnostic(query: string, alert: ActiveAlert | null): Promise<void> {
@@ -214,6 +220,42 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       selectedCase.value = (await dependencies.client.getCase(id)).data.item;
     }
 
+    async function promoteActive(): Promise<void> {
+      const task = activeTask.value;
+      if (task === null) throw new Error("未选择诊断任务");
+      await promote(task.id, {});
+    }
+
+    async function resolvePromotion(
+      resolution: "create_new" | "merge", candidateCaseId: string,
+    ): Promise<void> {
+      const task = activeTask.value;
+      if (task === null) throw new Error("未选择诊断任务");
+      await promote(task.id, { resolution, candidateCaseId });
+    }
+
+    async function promote(
+      taskId: string,
+      body: { readonly resolution?: "create_new" | "merge"; readonly candidateCaseId?: string },
+    ): Promise<void> {
+      promoting.value = true;
+      promotionError.value = null;
+      try {
+        const response = await dependencies.client.promoteDiagnostic(taskId, body);
+        promotionCandidates.value = response.data.candidates;
+        const item = response.data.item;
+        if (item !== null) {
+          selectedCase.value = item;
+          cases.value = [item, ...cases.value.filter((candidate) => candidate.id !== item.id)];
+        }
+      } catch (error: unknown) {
+        promotionError.value = message(error, "诊断案例提升失败");
+        throw error;
+      } finally {
+        promoting.value = false;
+      }
+    }
+
     async function knowledgeDocumentTarget(item = selectedCase.value): Promise<{
       readonly knowledgeBaseId: string; readonly documentId: string;
     }> {
@@ -233,6 +275,9 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       activeDetail.value = null;
       evidenceChain.value = null;
       selectedCase.value = null;
+      promotionCandidates.value = [];
+      promotionError.value = null;
+      promoting.value = false;
       liveEvents.value = [];
       timeline.value = [];
       executionChain.value = [];
@@ -248,11 +293,13 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
 
     registerProtectedStoreCleanup(reset);
     return {
-      history, activeAlerts, cases, activeDetail, evidenceChain, selectedCase, liveEvents,
+      history, activeAlerts, cases, activeDetail, evidenceChain, selectedCase,
+      promotionCandidates, promotionError, promoting, liveEvents,
       loading, creating, streaming, streamDisconnected, dataError, alertError, streamError,
       lastSequence, activeTask, activeJob, canCancel, timeline, executionChain,
       initialize, refreshAlerts, refreshHistory, refreshCases, selectDiagnostic,
       createDiagnostic, subscribeActive, reconcileActive, cancelActive, selectCase,
+      promoteActive, resolvePromotion,
       knowledgeDocumentTarget, reset,
     };
   });

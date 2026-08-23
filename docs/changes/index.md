@@ -33,6 +33,7 @@
 - [2026-08-23-complete-runtime-readiness-observability-and-operations](./archive/2026-08-23-complete-runtime-readiness-observability-and-operations/)
 - [2026-08-23-create-correlated-ecommerce-aiops-fixtures](./archive/2026-08-23-create-correlated-ecommerce-aiops-fixtures/)
 - [2026-08-23-publish-openspec-wiki](./archive/2026-08-23-publish-openspec-wiki/)
+- [2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance](./archive/2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance/)
 
 ## 主规格
 
@@ -60,6 +61,7 @@
 - [qwen-model-providers](../specs/qwen-model-providers/)
 - [reranked-hybrid-knowledge-retrieval](../specs/reranked-hybrid-knowledge-retrieval/)
 - [runtime-readiness-observability-and-operations](../specs/runtime-readiness-observability-and-operations/)
+- [schema-aware-aiops-tool-execution](../specs/schema-aware-aiops-tool-execution/)
 - [sqlite-repository-foundation](../specs/sqlite-repository-foundation/)
 - [tenant-isolation](../specs/tenant-isolation/)
 - [user-authentication](../specs/user-authentication/)

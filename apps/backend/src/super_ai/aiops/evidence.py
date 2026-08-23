@@ -8,6 +8,7 @@ from typing import cast
 from pydantic import BaseModel
 
 from super_ai.aiops.models import EvidenceKind, NewEvidence
+from super_ai.aiops.tool_adapters import AdaptedToolOutput, adapt_allowed_tool_output
 from super_ai.background_jobs.security import redact_error
 from super_ai.project_config import JsonValue
 
@@ -15,6 +16,14 @@ from super_ai.project_config import JsonValue
 def normalize_tool_evidence(
     *, tool_name: str, result: object, step_id: str, tool_call_id: str
 ) -> tuple[NewEvidence, ...]:
+    if tool_name.casefold().replace("_", "").replace("-", "") != "knowledgeretrieval":
+        adapted = adapt_allowed_tool_output(tool_name, result)
+        return normalize_adapted_tool_output(
+            tool_name=tool_name,
+            adapted=adapted,
+            step_id=step_id,
+            tool_call_id=tool_call_id,
+        )
     payload = _sanitize_json(_json_value(result))
     kind = _kind(tool_name)
     if kind is None:
@@ -41,6 +50,42 @@ def normalize_tool_evidence(
                 summary=safe[:1000],
                 content=safe,
                 metadata=metadata,
+                diagnostic_step_id=step_id,
+                tool_call_id=tool_call_id,
+            )
+        )
+    return tuple(normalized)
+
+
+def normalize_adapted_tool_output(
+    *,
+    tool_name: str,
+    adapted: AdaptedToolOutput,
+    step_id: str,
+    tool_call_id: str,
+) -> tuple[NewEvidence, ...]:
+    payload = _sanitize_json(adapted.payload)
+    if adapted.kind == "log_hit":
+        if not isinstance(payload, list):
+            raise ValueError("log_hit adapter 必须返回列表")
+        items = cast(list[JsonValue], payload)
+    else:
+        items = [payload]
+    kind = cast(EvidenceKind, adapted.kind)
+    normalized: list[NewEvidence] = []
+    for index, item in enumerate(items[:100]):
+        if not isinstance(item, dict):
+            raise ValueError(f"{adapted.kind} adapter 必须返回结构化对象")
+        metadata = cast(dict[str, JsonValue], item)
+        safe = redact_error(_bounded_text(metadata, 20_000), "{}")
+        normalized.append(
+            NewEvidence(
+                kind=kind,
+                source=tool_name,
+                title=f"{tool_name} {adapted.kind} {index + 1}"[:500],
+                summary=safe[:1000],
+                content=safe,
+                metadata={"artifactKind": adapted.kind, **metadata},
                 diagnostic_step_id=step_id,
                 tool_call_id=tool_call_id,
             )

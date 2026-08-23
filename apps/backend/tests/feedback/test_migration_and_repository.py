@@ -30,7 +30,7 @@ async def test_feedback_migration_has_stable_unique_subject_key(
             )
     finally:
         await engine.dispose()
-    assert revision == "20260821_0013"
+    assert revision == "20260823_0015"
     assert columns["subject_key"]["nullable"] is False
     assert any(item["column_names"] == [
         "owner_user_id", "target_type", "target_id", "subject_key"

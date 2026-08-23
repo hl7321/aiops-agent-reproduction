@@ -35,3 +35,32 @@ class DiagnosisCaseRecord:
     summary: str
     evidence_ids: tuple[str, ...]
     created_at: datetime
+    incident_fingerprint: str | None = None
+    knowledge_fingerprint: str | None = None
+    fingerprint_version: str | None = None
+    promotion_status: str = "legacy"
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticCaseSourceRecord:
+    id: str
+    owner_user_id: str
+    case_id: str
+    diagnostic_task_id: str
+    report_id: str
+    approval_feedback_id: str | None
+    evidence_ids: tuple[str, ...]
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosisCaseCandidate:
+    item: DiagnosisCaseRecord
+    similarity_score: float
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosisCasePromotionResult:
+    status: str
+    item: DiagnosisCaseRecord | None
+    candidates: tuple[DiagnosisCaseCandidate, ...] = ()

@@ -65,6 +65,18 @@ async function openDocument(): Promise<void> {
     feedback.show("error", error instanceof Error ? error.message : "知识文档不可用");
   }
 }
+
+async function promote(): Promise<void> {
+  try { await store.promoteActive(); feedback.show("success", "案例提升请求已处理"); }
+  catch (error: unknown) { feedback.show("error", error instanceof Error ? error.message : "案例提升失败"); }
+}
+
+async function resolvePromotion(
+  resolution: "create_new" | "merge", candidateCaseId: string,
+): Promise<void> {
+  try { await store.resolvePromotion(resolution, candidateCaseId); feedback.show("success", "相似案例决策已保存"); }
+  catch (error: unknown) { feedback.show("error", error instanceof Error ? error.message : "案例决策失败"); }
+}
 </script>
 
 <template>
@@ -84,7 +96,10 @@ async function openDocument(): Promise<void> {
       <AiopsReportTimeline
         :detail="store.activeDetail" :timeline="store.timeline" :streaming="store.streaming"
         :disconnected="store.streamDisconnected" :stream-error="store.streamError" :can-cancel="store.canCancel"
-        @cancel="cancel" @subscribe="store.subscribeActive()"
+        :promotion-candidates="store.promotionCandidates" :promotion-error="store.promotionError"
+        :promoting="store.promoting"
+        @cancel="cancel" @subscribe="store.subscribeActive()" @promote="promote"
+        @resolve-promotion="resolvePromotion"
       />
       <AiopsEvidenceCases
         :detail="store.activeDetail" :chain="store.evidenceChain" :execution-chain="store.executionChain"

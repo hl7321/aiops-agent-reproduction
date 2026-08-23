@@ -14,6 +14,8 @@ from super_ai.aiops.models import (
     PlanStep,
     ReportEvidenceLinkRecord,
     ReportMode,
+    ReportTrustState,
+    ToolErrorCategory,
 )
 from super_ai.project_config import JsonValue
 
@@ -47,6 +49,7 @@ class DiagnosticRepository(Protocol):
         *,
         result_summary: str | None = None,
         error_message: str | None = None,
+        error_category: ToolErrorCategory | None = None,
     ) -> DiagnosticStepRecord | None: ...
     async def list_steps(self, owner_user_id: str, task_id: str) -> list[DiagnosticStepRecord]: ...
     async def get_step(
@@ -65,7 +68,13 @@ class DiagnosticRepository(Protocol):
         self, owner_user_id: str, task_id: str
     ) -> GraphCheckpointRecord | None: ...
     async def create_report(
-        self, owner_user_id: str, task_id: str, markdown: str, mode: ReportMode, uncertainty: bool
+        self,
+        owner_user_id: str,
+        task_id: str,
+        markdown: str,
+        mode: ReportMode,
+        uncertainty: bool,
+        trust_state: ReportTrustState = "insufficient_evidence",
     ) -> DiagnosticReportRecord: ...
     async def latest_report(
         self, owner_user_id: str, task_id: str

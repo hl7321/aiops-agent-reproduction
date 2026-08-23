@@ -7,15 +7,18 @@ import pytest
 from sqlalchemy import func, select
 
 from super_ai.aiops.cases.service import DiagnosisCasePersistor, LegacyDiagnosisKnowledgeSaver
+from super_ai.aiops.models import NewEvidence
 from super_ai.api_contracts import KnowledgeRetrievalToolInput
 from super_ai.api_responses import AppError
 from super_ai.auth.models import UserRecord
+from super_ai.feedback.models import FeedbackUpsert
 from super_ai.llm.rerank import RerankResult
 from super_ai.memory.config import DatabaseSettings
 from super_ai.memory.extended_sqlite.auth_repositories import SqliteUserRepository
 from super_ai.memory.extended_sqlite.background_job_models import BackgroundJobModel
 from super_ai.memory.extended_sqlite.diagnosis_case_models import DiagnosisCaseModel
 from super_ai.memory.extended_sqlite.diagnostic_repositories import SqliteDiagnosticRepository
+from super_ai.memory.extended_sqlite.feedback_repositories import SqliteFeedbackRepository
 from super_ai.memory.extended_sqlite.knowledge_models import KnowledgeDocumentModel
 from super_ai.memory.sqlite import PersistenceRuntime, transaction_scope, upgrade_database
 from super_ai.retrieval.corpus import SqliteRetrievalCorpusSource
@@ -74,6 +77,34 @@ async def _successful_task(runtime: PersistenceRuntime, owner: str) -> tuple[str
             "# 告警分析报告\n- 根因结论：连接池耗尽\n- 建议：扩容\n- 整体评估：已定位",
             "model",
             False,
+            "verified_evidence",
+        )
+        evidence = await repository.add_evidence(
+            owner,
+            task.id,
+            NewEvidence(
+                kind="log_hit",
+                source="SearchLog",
+                title="HighError 日志命中",
+                summary="连接池耗尽",
+                content="incident_id=inc-001 connection pool exhausted",
+                metadata={"incidentId": "inc-001"},
+            ),
+        )
+        await repository.link_evidence(
+            owner, task.id, report.id, evidence.id, "root-cause", "根因结论", 0
+        )
+        await SqliteFeedbackRepository(session).upsert(
+            owner,
+            FeedbackUpsert(
+                target_type="diagnostic_report",
+                target_id=report.id,
+                subject_key="",
+                rating="positive",
+                reason=None,
+                comment="人工确认结论可信",
+                correction=None,
+            ),
         )
         await repository.transition_task(owner, task.id, "succeeded")
         return task.id, report.id
@@ -99,7 +130,7 @@ async def test_successful_report_creates_case_document_and_durable_index_job(
                 )
             )
         assert document.source_metadata["knowledgeType"] == "diagnostic-case"
-        assert case.evidence_ids == ()
+        assert len(case.evidence_ids) == 1
         assert jobs == 1
         chunks = await SqliteRetrievalCorpusSource(runtime.session_factory).load(
             "owner-a", (document.knowledge_base_id,), (document.id,)

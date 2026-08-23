@@ -14,14 +14,17 @@ from super_ai.aiops.planning import (
     ReplanDraft,
     ReportDraft,
     SearchLogQueryDefaults,
+    ToolArgumentRepairDraft,
 )
 from super_ai.aiops.runtime import DiagnosticRuntime
+from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
 from super_ai.api_contracts import KnowledgeRetrievalToolInput, KnowledgeRetrievalToolOutput
 from super_ai.api_responses import AppError
 from super_ai.background_jobs.handlers import BackgroundJobContext
 from super_ai.background_jobs.models import BackgroundJobEventRecord, NewBackgroundJob
 from super_ai.memory.config import DatabaseSettings
 from super_ai.memory.extended_sqlite.agent_audit_repositories import (
+    SqliteAgentToolCallAuditRepository,
     SqliteAgentToolCallAuditStore,
 )
 from super_ai.memory.extended_sqlite.auth_models import UserModel
@@ -75,7 +78,7 @@ class FakeResolver:
             Query: str,
             Region: str,
             TopicId: str = "",
-        ) -> dict[str, str]:
+        ) -> object:
             """查询真实测试边界日志。"""
             self.arguments.append(
                 {
@@ -86,15 +89,31 @@ class FakeResolver:
                     "TopicId": TopicId,
                 }
             )
-            return {"message": f"真实日志:{Query}", "service": "checkout"}
+            return {
+                "structuredContent": [
+                    {
+                        "Time": int(To),
+                        "PkgId": "pkg-test",
+                        "PkgLogId": 1,
+                        "LogJson": f'{{"message":"真实日志:{Query}","service":"checkout"}}',
+                    }
+                ]
+            }
 
         return (search_log,)
 
 
 class FakeModel:
-    async def plan(self, *, context: str, tool_names: Sequence[str]) -> PlanDraft:
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
         assert "HighError" in context
-        assert tuple(tool_names) == ("knowledge_retrieval", "SearchLog")
+        assert not validation_errors
+        assert tuple(item.name for item in tool_catalog) == ("knowledge_retrieval", "SearchLog")
         return PlanDraft(
             steps=[
                 PlanStepDraft(
@@ -102,6 +121,16 @@ class FakeModel:
                 )
             ]
         )
+
+    async def repair_tool_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        argument_keys: Sequence[str],
+        validation_errors: Sequence[str],
+    ) -> ToolArgumentRepairDraft:
+        raise AssertionError("有效测试参数不应进入纠错")
 
     async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft:
         assert context and not remaining_steps
@@ -121,8 +150,53 @@ class EmptyResolver:
         return ()
 
 
+class ReportOnFailureModel(FakeModel):
+    async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft:
+        assert context and remaining_steps
+        return ReplanDraft(action="report", reason="尝试耗尽，生成诚实失败说明")
+
+
+class RepairingModel(FakeModel):
+    def __init__(self) -> None:
+        self.validation_errors: tuple[str, ...] = ()
+
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        assert context and tool_catalog and not validation_errors
+        return PlanDraft(
+            steps=[
+                PlanStepDraft(
+                    toolName="SearchLog", purpose="查询告警日志", arguments={"Query": ""}
+                )
+            ]
+        )
+
+    async def repair_tool_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        argument_keys: Sequence[str],
+        validation_errors: Sequence[str],
+    ) -> ToolArgumentRepairDraft:
+        assert context and tool.name == "SearchLog" and "Query" in argument_keys
+        self.validation_errors = tuple(validation_errors)
+        return ToolArgumentRepairDraft(arguments={"Query": "error"})
+
+
 class NeverCalledModel(FakeModel):
-    async def plan(self, *, context: str, tool_names: Sequence[str]) -> PlanDraft:
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
         raise AssertionError("无 SearchLog 时不得调用 planner model")
 
 
@@ -145,7 +219,7 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
                 )
             )
             diagnostics = SqliteDiagnosticRepository(session)
-            task = await diagnostics.create_task("owner", "排查", [{"alertName": "HighError"}])
+            task = await diagnostics.create_task("owner", None, [{"alertName": "HighError"}])
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner",
                 NewBackgroundJob(
@@ -165,7 +239,6 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
             AgentToolAuditService(
                 SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
             ),
-            case_persistor=DiagnosisCasePersistor(runtime.session_factory),
             search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
             now_ms=lambda: 1_787_480_100_000,
         )
@@ -196,15 +269,76 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
             )
             cases = await DiagnosisCasePersistor(runtime.session_factory).list("owner")
         assert saved is not None and saved.status == "succeeded"
-        assert [item.kind for item in evidence] == ["log"]
+        assert [item.kind for item in evidence] == ["log_hit"]
         assert report is not None and report.generation_mode == "fallback"
         assert report.uncertainty is True and "证据不足" in report.markdown
+        assert report.trust_state == "insufficient_evidence"
         assert [item.evidence_id for item in links] == [evidence[0].id]
         assert checkpoint is not None and checkpoint.node == "report"
         assert events is not None
-        assert len(cases) == 1 and cases[0].task_id == task.id
-        assert cases[0].evidence_ids == (evidence[0].id,)
+        assert cases == []
         assert any("未检索到匹配 SOP" in str(item.data) for item in events)
+    finally:
+        await runtime.close()
+
+
+async def test_executor_repairs_pydantic_input_and_audits_both_attempts(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'repair-input.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        model = RepairingModel()
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            FakeResolver([]),
+            model,
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            repository = SqliteDiagnosticRepository(session)
+            steps = await repository.list_steps("owner", task.id)
+            audits = await SqliteAgentToolCallAuditRepository(session).list_for_diagnostic(
+                "owner", task.id
+            )
+
+        assert [(item.attempt, item.status, item.error_category) for item in steps] == [
+            (1, "failed", "input_validation"),
+            (2, "succeeded", None),
+        ]
+        assert [item.status for item in audits if item.tool_name == "SearchLog"] == [
+            "failed",
+            "completed",
+        ]
+        assert model.validation_errors and "Query" in model.validation_errors[0]
+        assert "input_value" not in model.validation_errors[0]
     finally:
         await runtime.close()
 
@@ -377,5 +511,143 @@ async def test_restore_ignores_checkpoint_from_previous_plan_version(tmp_path: P
         assert [(step.plan_version, step.position, step.status) for step in steps] == [
             (1, 0, "succeeded")
         ]
+    finally:
+        await runtime.close()
+
+
+async def test_restore_continues_attempt_sequence_without_reusing_attempt_one(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'attempt-recovery.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.save_plan(
+                "owner",
+                task.id,
+                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                replan_count=0,
+            )
+            assert task is not None
+            first = await repository.start_step(
+                "owner", task.id, task.plan_version, task.current_plan[0], attempt=1
+            )
+            await repository.finish_step(
+                "owner",
+                first.id,
+                "failed",
+                error_message="timeout: TimeoutError",
+                error_category="timeout",
+            )
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            FakeResolver([]),
+            FakeModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            steps = await SqliteDiagnosticRepository(session).list_steps("owner", task.id)
+
+        assert [(step.attempt, step.status) for step in steps] == [
+            (1, "failed"),
+            (2, "succeeded"),
+        ]
+    finally:
+        await runtime.close()
+
+
+async def test_exhausted_required_search_attempts_persist_failed_explanation(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'attempts-exhausted.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.save_plan(
+                "owner",
+                task.id,
+                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                replan_count=0,
+            )
+            assert task is not None
+            for attempt in range(1, 4):
+                step = await repository.start_step(
+                    "owner", task.id, task.plan_version, task.current_plan[0], attempt=attempt
+                )
+                await repository.finish_step(
+                    "owner",
+                    step.id,
+                    "failed",
+                    error_message="timeout: TimeoutError",
+                    error_category="timeout",
+                )
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            FakeResolver([]),
+            ReportOnFailureModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        with pytest.raises(AppError) as caught:
+            await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        assert caught.value.code == "SYSTEM_UNAVAILABLE"
+        async with transaction_scope(runtime.session_factory) as session:
+            repository = SqliteDiagnosticRepository(session)
+            saved = await repository.get_task("owner", task.id)
+            report = await repository.latest_report("owner", task.id)
+
+        assert saved is not None and saved.status == "failed"
+        assert report is not None and report.trust_state == "execution_failed"
+        assert report.uncertainty is True
     finally:
         await runtime.close()
