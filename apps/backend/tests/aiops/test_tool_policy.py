@@ -60,3 +60,22 @@ def test_restored_plan_fails_if_previously_allowed_tool_disappeared() -> None:
         pass
     else:
         raise AssertionError("恢复时不得调用已经 disabled 或消失的 MCP 工具")
+
+
+def test_catalog_preserves_official_flat_schema_field_names() -> None:
+    search = _tool_named("SearchLog")
+    search.args_schema = {
+        "From": {"type": "number"},
+        "To": {"type": "number"},
+        "Query": {"type": "string"},
+        "TopicId": {"type": "string"},
+        "Region": {"type": "string"},
+    }
+    registry = build_aiops_tool_registry((search,))
+    assert registry.catalog[0].input_schema["properties"] == {
+        "From": {"type": "number"},
+        "To": {"type": "number"},
+        "Query": {"type": "string"},
+        "TopicId": {"type": "string"},
+        "Region": {"type": "string"},
+    }

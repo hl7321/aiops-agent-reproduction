@@ -324,6 +324,7 @@ class DiagnosticRuntime:
                 if item.plan_version == task.plan_version
                 and item.position == plan_step.position
             ]
+            search_query_override: str | None = None
             for interrupted in matching_attempts:
                 if interrupted.status == "running":
                     await self._store.call(
@@ -371,7 +372,9 @@ class DiagnosticRuntime:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")
                         proposed = dict(candidate_arguments)
                         query_artifact = _latest_query_artifact(evidence)
-                        if query_artifact is not None:
+                        if search_query_override is not None:
+                            proposed["Query"] = search_query_override
+                        elif query_artifact is not None:
                             proposed["Query"] = query_artifact
                         invocation_arguments = normalize_search_log_arguments(
                             proposed,
@@ -383,7 +386,7 @@ class DiagnosticRuntime:
                         invocation_arguments = cast(
                             dict[str, JsonValue],
                             SearchLogInput.model_validate(invocation_arguments).model_dump(
-                                mode="json", by_alias=True
+                                mode="json", by_alias=True, exclude_unset=True
                             ),
                         )
                     elif is_log_context_tool(plan_step.tool_name):
@@ -524,6 +527,18 @@ class DiagnosticRuntime:
                     )
                     state = {**state, "last_error": failure.safe_message}
                     await checkpoint("executor", state)
+                    if (
+                        failure.category == "empty_result"
+                        and is_search_log_tool(plan_step.tool_name)
+                        and attempt < 3
+                    ):
+                        fallback_query = _search_log_fallback_query(task.alerts)
+                        if (
+                            fallback_query != "*"
+                            and invocation_arguments.get("Query") != fallback_query
+                        ):
+                            search_query_override = fallback_query
+                            continue
                     if failure.route == "permanent_failure":
                         raise RuntimeError(failure.safe_message) from error
                     if failure.route == "replan" or attempt == 3:
@@ -788,7 +803,9 @@ def _latest_log_hit(
         if item.kind != "log_hit":
             continue
         try:
-            return ClsSearchLogHit.model_validate(item.metadata)
+            hit = ClsSearchLogHit.model_validate(item.metadata)
+            if hit.has_context_locator:
+                return hit
         except Exception:
             continue
     return None

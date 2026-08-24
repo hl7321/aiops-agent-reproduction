@@ -18,10 +18,15 @@ from super_ai.aiops.tool_adapters import (
 
 
 def test_core_cls_inputs_are_explicit_and_forbid_unknown_fields() -> None:
-    query = TextToSearchLogQueryInput(
-        Region="ap-guangzhou", TopicId="topic-1", Prompt="查询 payment 错误"
+    query = TextToSearchLogQueryInput.model_validate(
+        {"Region": "ap-guangzhou", "TopicId": "topic-1", "Prompt": "查询 payment 错误"}
     )
     assert query.prompt == "查询 payment 错误"
+    assert query.model_dump(mode="json", by_alias=True) == {
+        "Region": "ap-guangzhou",
+        "TopicId": "topic-1",
+        "Text": "查询 payment 错误",
+    }
     search = SearchLogInput(
         Region="ap-guangzhou",
         TopicId="topic-1",
@@ -29,8 +34,22 @@ def test_core_cls_inputs_are_explicit_and_forbid_unknown_fields() -> None:
         To=2000,
         Query='incident_id:"java-ecom-001"',
         Limit=100,
+        Sort="desc",
+        Offset=0,
+        SamplingRate=1,
     )
     assert search.query.startswith("incident_id")
+    with pytest.raises(ValidationError):
+        SearchLogInput.model_validate(
+            {
+                "Region": "ap-guangzhou",
+                "TopicId": "topic-1",
+                "From": 1000,
+                "To": 2000,
+                "Query": "*",
+                "Sort": "random",
+            }
+        )
     with pytest.raises(ValidationError):
         SearchLogInput.model_validate(
             {
@@ -55,7 +74,51 @@ def test_query_builder_parses_structured_and_text_wrappers() -> None:
     assert wrapped.query == "trace_id:trace-001"
 
 
-def test_search_log_parses_official_raw_hit_and_rejects_missing_locator() -> None:
+def test_query_builder_parses_official_langchain_content_block() -> None:
+    artifact = parse_text_to_search_log_query_result(
+        [
+            {
+                "type": "text",
+                "id": "response-1",
+                "text": (
+                    '{"Choices":[{"Message":{"Content":'
+                    '"service:payment-service AND level:ERROR"}}]}'
+                ),
+            }
+        ]
+    )
+    assert artifact.query == "service:payment-service AND level:ERROR"
+
+
+def test_query_builder_extracts_only_fenced_cql_from_explanatory_markdown() -> None:
+    artifact = parse_text_to_search_log_query_result(
+        [
+            {
+                "type": "text",
+                "text": (
+                    '{"Choices":[{"Message":{"Content":'
+                    '"查询说明：\\n\\n```sql\\nservice:\\\"payment-service\\\" '
+                    'AND level:ERROR\\n```\\n\\n解释：后续文字不能进入查询。"}}]}'
+                ),
+            }
+        ]
+    )
+    assert artifact.query == 'service:"payment-service" AND level:ERROR'
+
+
+def test_query_builder_removes_projection_pipeline_to_preserve_raw_log_hits() -> None:
+    artifact = parse_text_to_search_log_query_result(
+        {
+            "Query": (
+                'trace_id:"trace-1" AND level:ERROR '
+                '| SELECT timestamp, message ORDER BY timestamp DESC LIMIT 50'
+            )
+        }
+    )
+    assert artifact.query == 'trace_id:"trace-1" AND level:ERROR'
+
+
+def test_search_log_parses_official_raw_hit_and_allows_missing_context_locator() -> None:
     result = {
         "content": [
             {
@@ -73,9 +136,19 @@ def test_search_log_parses_official_raw_hit_and_rejects_missing_locator() -> Non
         "pkg-1",
         2,
     )
-    with pytest.raises(ValueError, match="PkgId"):
+    without_locator = parse_search_log_result(
+        [
+            {
+                "type": "text",
+                "text": '[{"Time":1,"PkgId":"","PkgLogId":"","LogJson":"{}"}]',
+            }
+        ]
+    )[0]
+    assert without_locator.pkg_id is None
+    assert without_locator.pkg_log_id is None
+    with pytest.raises(ValueError, match="字段"):
         parse_search_log_result(
-            {"structuredContent": [{"Time": 1, "PkgId": "", "PkgLogId": 0, "LogJson": "{}"}]}
+            [{"Time": 1, "PkgId": "pkg", "PkgLogId": "not-a-number", "LogJson": "{}"}]
         )
 
 
@@ -101,6 +174,15 @@ def test_context_input_uses_only_local_defaults_and_validated_hit() -> None:
         build_describe_log_context_input(
             hit, SearchLogQueryDefaults("", ""), proposed={}
         )
+    hit_without_locator = parse_search_log_result(
+        [{"Time": 1, "PkgId": "", "PkgLogId": "", "LogJson": "{}"}]
+    )[0]
+    with pytest.raises(ValueError, match="定位字段"):
+        build_describe_log_context_input(
+            hit_without_locator,
+            SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            proposed={},
+        )
 
 
 def test_context_and_metric_outputs_use_separate_adapters() -> None:
@@ -121,6 +203,23 @@ def test_context_and_metric_outputs_use_separate_adapters() -> None:
     assert metric.kind == "metric"
     with pytest.raises(ValueError, match="无法解析"):
         parse_describe_log_context_result({"content": [{"type": "text", "text": "ok"}]})
+
+
+def test_context_parser_accepts_official_log_context_infos() -> None:
+    context = parse_describe_log_context_result(
+        [
+            {
+                "type": "text",
+                "text": (
+                    '{"LogContextInfos":['
+                    '{"BTime":10,"Content":"before"},'
+                    '{"BTime":11,"Content":"failed"},'
+                    '{"BTime":12,"Content":"retry"}]}'
+                ),
+            }
+        ]
+    )
+    assert [item.log_json for item in context.ordered_logs] == ["before", "failed", "retry"]
 
 
 def test_core_runtime_schema_rejects_unknown_required_authority_field() -> None:
@@ -151,3 +250,14 @@ def test_core_runtime_schema_rejects_unknown_required_authority_field() -> None:
                 "required": ["Region", "Query", "Authorization"],
             },
         )
+
+
+def test_core_runtime_schema_accepts_official_flat_field_mapping() -> None:
+    ensure_core_tool_schema_compatible(
+        "TextToSearchLogQuery",
+        {
+            "Text": {"type": "string"},
+            "Region": {"type": "string"},
+            "TopicId": {"type": "string"},
+        },
+    )

@@ -189,6 +189,59 @@ class RepairingModel(FakeModel):
         return ToolArgumentRepairDraft(arguments={"Query": "error"})
 
 
+class EmptyThenCorrelatedResolver(FakeResolver):
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id and builtin_tool_names == frozenset({"knowledge_retrieval"})
+        self.order.append("mcp")
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float,
+            To: float,
+            Query: str,
+            Region: str,
+            TopicId: str = "",
+        ) -> object:
+            """查询真实测试边界日志。"""
+            self.arguments.append({"Query": Query})
+            if Query != 'incident_id:"incident-1"':
+                return {"structuredContent": []}
+            return {
+                "structuredContent": [
+                    {
+                        "Time": int(To),
+                        "PkgId": "",
+                        "PkgLogId": "",
+                        "LogJson": '{"incident_id":"incident-1","level":"ERROR"}',
+                    }
+                ]
+            }
+
+        return (search_log,)
+
+
+class SpecificSearchModel(FakeModel):
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        assert context and tool_catalog and not validation_errors
+        return PlanDraft(
+            steps=[
+                PlanStepDraft(
+                    toolName="SearchLog",
+                    purpose="先尝试精确条件",
+                    arguments={"Query": 'trace_id:"trace-1" AND exception:"short-name"'},
+                )
+            ]
+        )
+
+
 class NeverCalledModel(FakeModel):
     async def plan(
         self,
@@ -339,6 +392,65 @@ async def test_executor_repairs_pydantic_input_and_audits_both_attempts(
         ]
         assert model.validation_errors and "Query" in model.validation_errors[0]
         assert "input_value" not in model.validation_errors[0]
+    finally:
+        await runtime.close()
+
+
+async def test_empty_search_widens_to_owner_alert_correlation_identifier(
+    tmp_path: Path,
+) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'widen-search.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task(
+                "owner",
+                None,
+                [{"alertName": "HighError", "labels": {"incident_id": "incident-1"}}],
+            )
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        resolver = EmptyThenCorrelatedResolver([])
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            resolver,
+            SpecificSearchModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            repository = SqliteDiagnosticRepository(session)
+            evidence = await repository.list_evidence("owner", task.id)
+            steps = await repository.list_steps("owner", task.id)
+
+        assert [item["Query"] for item in resolver.arguments] == [
+            'trace_id:"trace-1" AND exception:"short-name"',
+            'incident_id:"incident-1"',
+        ]
+        assert [item.status for item in steps] == ["failed", "succeeded"]
+        assert [item.kind for item in evidence] == ["log_hit"]
     finally:
         await runtime.close()
 

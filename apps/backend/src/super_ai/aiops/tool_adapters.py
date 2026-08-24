@@ -18,6 +18,7 @@ from super_ai.aiops.cls_tool_adapters import (
     parse_text_to_search_log_query_result,
     unwrap_mcp_payload,
 )
+from super_ai.aiops.tool_schema import tool_schema_properties, tool_schema_required
 from super_ai.project_config import JsonValue
 
 ArtifactKind = Literal["query_artifact", "log_hit", "log_context", "metric"]
@@ -49,8 +50,8 @@ def ensure_core_tool_schema_compatible(
     model = _CORE_INPUT_MODELS.get(normalized)
     if model is None:
         return
-    raw_properties = schema.get("properties")
-    if not isinstance(raw_properties, Mapping):
+    raw_properties = tool_schema_properties(schema)
+    if not raw_properties:
         raise ValueError(f"{tool_name} runtime Schema 缺少 properties")
     local_schema = model.model_json_schema(by_alias=True)
     local_properties = local_schema.get("properties", {})
@@ -59,12 +60,7 @@ def ensure_core_tool_schema_compatible(
         if isinstance(local_properties, Mapping)
         else set()
     )
-    raw_required = schema.get("required", [])
-    required: set[str] = (
-        {item for item in cast(list[object], raw_required) if isinstance(item, str)}
-        if isinstance(raw_required, list)
-        else set()
-    )
+    required = set(tool_schema_required(schema))
     unknown = sorted(required - allowed)
     if unknown:
         raise ValueError(f"{tool_name} runtime Schema 出现未知必填字段: {', '.join(unknown)}")

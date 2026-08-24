@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
 from pydantic import (
     AliasChoices,
@@ -30,7 +31,7 @@ class TextToSearchLogQueryInput(ClsInputModel):
     region: NonEmpty = Field(alias="Region")
     topic_id: NonEmpty = Field(alias="TopicId")
     prompt: NonEmpty = Field(
-        alias="Prompt", validation_alias=AliasChoices("Prompt", "Question", "Text")
+        alias="Text", validation_alias=AliasChoices("Text", "Prompt", "Question")
     )
 
 
@@ -41,6 +42,9 @@ class SearchLogInput(ClsInputModel):
     to_ms: int = Field(alias="To", ge=0)
     query: NonEmpty = Field(alias="Query", max_length=12_000)
     limit: int = Field(default=100, alias="Limit", ge=1, le=100)
+    sort: Literal["asc", "desc"] = Field(default="desc", alias="Sort")
+    offset: int = Field(default=0, alias="Offset", ge=0)
+    sampling_rate: float = Field(default=1, alias="SamplingRate", ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_range(self) -> SearchLogInput:
@@ -54,7 +58,7 @@ class DescribeLogContextInput(ClsInputModel):
     topic_id: NonEmpty = Field(alias="TopicId")
     time: int = Field(alias="Time", ge=0)
     pkg_id: NonEmpty = Field(alias="PkgId")
-    pkg_log_id: int | NonEmpty = Field(alias="PkgLogId")
+    pkg_log_id: int = Field(alias="PkgLogId", ge=0)
     prev_logs: int = Field(default=10, alias="PrevLogs", ge=0, le=100)
     next_logs: int = Field(default=10, alias="NextLogs", ge=0, le=100)
 
@@ -68,35 +72,69 @@ class ClsSearchLogHit(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     time: int = Field(alias="Time", ge=0)
-    pkg_id: NonEmpty = Field(alias="PkgId")
-    pkg_log_id: int | NonEmpty = Field(alias="PkgLogId")
+    pkg_id: NonEmpty | None = Field(default=None, alias="PkgId")
+    pkg_log_id: int | None = Field(default=None, alias="PkgLogId", ge=0)
     log_json: NonEmpty = Field(alias="LogJson")
 
-    @field_validator("pkg_log_id")
+    @field_validator("pkg_id", mode="before")
     @classmethod
-    def reject_negative_pkg_log_id(cls, value: int | str) -> int | str:
-        if isinstance(value, int) and value < 0:
-            raise ValueError("PkgLogId 不得为负数")
+    def normalize_empty_pkg_id(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
+
+    @field_validator("pkg_log_id", mode="before")
+    @classmethod
+    def normalize_pkg_log_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            if stripped.isdecimal():
+                return int(stripped)
+        return value
+
+    @property
+    def has_context_locator(self) -> bool:
+        return self.pkg_id is not None and self.pkg_log_id is not None
 
 
 class ClsContextLogLine(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    time: int = Field(alias="Time", ge=0)
-    log_json: NonEmpty = Field(alias="LogJson")
+    time: int = Field(alias="Time", validation_alias=AliasChoices("Time", "BTime"), ge=0)
+    log_json: NonEmpty = Field(
+        alias="LogJson", validation_alias=AliasChoices("LogJson", "Content")
+    )
 
 
 class DescribeLogContextResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
-    previous_logs: list[ClsContextLogLine] = Field(alias="PrevLogs")
-    current_log: ClsContextLogLine = Field(alias="CurrentLog")
-    next_logs: list[ClsContextLogLine] = Field(alias="NextLogs")
+    context_logs: list[ClsContextLogLine] = Field(alias="LogContextInfos")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_shape(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        typed = cast(dict[str, object], value)
+        if "LogContextInfos" in typed:
+            return typed
+        previous = typed.get("PrevLogs", [])
+        current = typed.get("CurrentLog")
+        following = typed.get("NextLogs", [])
+        if not isinstance(previous, list) or not isinstance(following, list):
+            return typed
+        combined: list[object] = [*cast(list[object], previous)]
+        if current is not None:
+            combined.append(current)
+        combined.extend(cast(list[object], following))
+        return {"LogContextInfos": combined}
 
     @property
     def ordered_logs(self) -> tuple[ClsContextLogLine, ...]:
-        return (*self.previous_logs, self.current_log, *self.next_logs)
+        return tuple(self.context_logs)
 
 
 def parse_text_to_search_log_query_result(result: object) -> QueryArtifact:
@@ -105,6 +143,20 @@ def parse_text_to_search_log_query_result(result: object) -> QueryArtifact:
         typed = cast(dict[str, JsonValue], payload)
         nested = typed.get("data")
         payload = nested if isinstance(nested, dict) else typed
+        choices = typed.get("Choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("Message")
+            if isinstance(message, dict):
+                content = message.get("Content")
+                if isinstance(content, str) and content.strip():
+                    payload = {"Query": _extract_generated_query(content)}
+    elif isinstance(payload, str) and payload.strip():
+        payload = {"Query": _extract_generated_query(payload)}
+    if isinstance(payload, dict):
+        typed_payload = cast(dict[str, JsonValue], payload)
+        raw_query = typed_payload.get("Query", typed_payload.get("query"))
+        if isinstance(raw_query, str):
+            payload = {"Query": _extract_generated_query(raw_query)}
     try:
         return QueryArtifact.model_validate(payload)
     except Exception as error:
@@ -153,6 +205,8 @@ def build_describe_log_context_input(
     topic_id = defaults.topic_id.strip()
     if not region or not topic_id:
         raise ValueError("clsLogUpload region/topicId 配置缺失")
+    if not hit.has_context_locator:
+        raise ValueError("SearchLog 命中缺少 DescribeLogContext 定位字段")
     prev_logs = proposed.get("PrevLogs", proposed.get("prevLogs", 10))
     next_logs = proposed.get("NextLogs", proposed.get("nextLogs", 10))
     return DescribeLogContextInput.model_validate(
@@ -178,9 +232,11 @@ def build_text_to_search_log_query_input(
     topic_id = defaults.topic_id.strip()
     if not region or not topic_id:
         raise ValueError("clsLogUpload region/topicId 配置缺失")
-    prompt = proposed.get("Prompt", proposed.get("prompt", fallback_prompt))
+    prompt = proposed.get(
+        "Text", proposed.get("Prompt", proposed.get("prompt", fallback_prompt))
+    )
     return TextToSearchLogQueryInput.model_validate(
-        {"Region": region, "TopicId": topic_id, "Prompt": prompt}
+        {"Region": region, "TopicId": topic_id, "Text": prompt}
     )
 
 
@@ -190,6 +246,11 @@ def unwrap_mcp_payload(result: object) -> JsonValue:
     if isinstance(result, str):
         return _parse_json_text(result)
     if isinstance(result, list):
+        for block in cast(list[object], result):
+            if isinstance(block, dict):
+                text = cast(dict[str, object], block).get("text")
+                if isinstance(text, str):
+                    return _parse_json_text_or_value(text)
         return cast(JsonValue, result)
     if not isinstance(result, dict):
         raise ValueError("MCP 输出不是可解析的 JSON/content wrapper")
@@ -216,3 +277,23 @@ def _parse_json_text(value: str) -> JsonValue:
     if parsed is None or isinstance(parsed, (bool, int, float, str, list, dict)):
         return cast(JsonValue, parsed)
     raise ValueError("MCP text content JSON 类型无效")
+
+
+def _parse_json_text_or_value(value: str) -> JsonValue:
+    try:
+        return _parse_json_text(value)
+    except ValueError:
+        if value.strip():
+            return value.strip()
+        raise
+
+
+def _extract_generated_query(value: str) -> str:
+    fenced = re.findall(r"```(?:sql|cql)?\s*(.*?)```", value, flags=re.IGNORECASE | re.DOTALL)
+    if len(fenced) > 1:
+        raise ValueError("TextToSearchLogQuery 返回了多个查询代码块")
+    query = fenced[0].strip() if fenced else value.strip()
+    query = re.split(r"\s+\|\s+(?=SELECT\b)", query, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    if not query:
+        raise ValueError("TextToSearchLogQuery 返回了空查询")
+    return query

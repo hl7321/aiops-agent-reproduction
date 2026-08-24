@@ -10,6 +10,7 @@ from typing import Literal, cast
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
+from super_ai.aiops.tool_schema import tool_schema_properties, tool_schema_required
 from super_ai.project_config import JsonValue
 
 ToolCapability = Literal[
@@ -130,9 +131,9 @@ def _safe_schema_summary(tool: BaseTool) -> dict[str, JsonValue]:
         schema = cast(Mapping[str, object], raw.model_json_schema())
     else:
         return {"type": "object", "properties": {}, "required": []}
-    raw_properties = schema.get("properties")
+    raw_properties = tool_schema_properties(schema)
     properties: dict[str, JsonValue] = {}
-    if isinstance(raw_properties, dict):
+    if raw_properties:
         typed_properties = cast(dict[object, object], raw_properties)
         for key, value in list(typed_properties.items())[:40]:
             if not isinstance(key, str) or not isinstance(value, dict):
@@ -142,12 +143,7 @@ def _safe_schema_summary(tool: BaseTool) -> dict[str, JsonValue]:
             properties[key] = {
                 "type": field_type if isinstance(field_type, str) else "unknown"
             }
-    raw_required = schema.get("required")
     required: list[JsonValue] = []
-    if isinstance(raw_required, list):
-        for item in cast(list[object], raw_required):
-            if isinstance(item, str):
-                required.append(item)
-            if len(required) == 40:
-                break
+    for item in tool_schema_required(schema)[:40]:
+        required.append(item)
     return {"type": "object", "properties": properties, "required": required}

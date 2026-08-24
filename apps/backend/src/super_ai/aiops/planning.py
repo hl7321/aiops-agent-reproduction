@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Protocol
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from super_ai.aiops.models import DiagnosticEvidenceRecord, PlanStep
 from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
+from super_ai.aiops.tool_schema import tool_schema_properties, tool_schema_required
 from super_ai.api_contracts import DiagnosticReplanAction
 
 MAX_PLAN_STEPS = 8
@@ -38,11 +39,10 @@ def normalize_search_log_arguments(
     topic_id = defaults.topic_id.strip()
     if not region or not topic_id:
         raise ValueError("clsLogUpload region/topicId 配置缺失")
-    raw_properties = schema.get("properties")
-    if not isinstance(raw_properties, dict):
+    raw_properties = tool_schema_properties(schema)
+    if not raw_properties:
         raise ValueError("SearchLog 工具缺少可验证的 properties schema")
-    properties = cast(dict[object, object], raw_properties)
-    allowed = {str(key) for key in properties}
+    allowed = set(raw_properties)
     normalized: dict[str, JsonValue] = {
         key: value for key, value in arguments.items() if key in allowed
     }
@@ -66,14 +66,37 @@ def normalize_search_log_arguments(
     normalized.setdefault("From", current_ms - 60 * 60 * 1000)
     normalized.setdefault("To", current_ms)
     normalized.setdefault("Query", fallback_query[:12_000])
+    for time_key in ("From", "To"):
+        time_value = normalized.get(time_key)
+        if (
+            isinstance(time_value, (int, float))
+            and not isinstance(time_value, bool)
+            and 1_000_000_000 <= time_value < 100_000_000_000
+        ):
+            normalized[time_key] = time_value * 1000
+    from_value = normalized.get("From")
+    to_value = normalized.get("To")
+    if (
+        isinstance(from_value, (int, float))
+        and not isinstance(from_value, bool)
+        and isinstance(to_value, (int, float))
+        and not isinstance(to_value, bool)
+        and (
+            from_value >= to_value
+            or to_value < current_ms - 5 * 60 * 1000
+            or to_value > current_ms + 5 * 60 * 1000
+            or to_value - from_value > 24 * 60 * 60 * 1000
+        )
+    ):
+        normalized["From"] = current_ms - 60 * 60 * 1000
+        normalized["To"] = current_ms
     if "Region" in allowed:
         normalized["Region"] = region
     if "TopicId" in allowed:
         normalized["TopicId"] = topic_id
 
-    raw_required = schema.get("required", ())
-    required = cast(list[object], raw_required) if isinstance(raw_required, list) else []
-    missing = [str(key) for key in required if isinstance(key, str) and key not in normalized]
+    required = tool_schema_required(schema)
+    missing = [key for key in required if key not in normalized]
     if missing:
         raise ValueError(f"SearchLog 参数缺少必填字段: {', '.join(missing)}")
     return {key: value for key, value in normalized.items() if key in allowed}

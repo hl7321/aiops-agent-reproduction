@@ -244,6 +244,67 @@ def test_official_search_log_arguments_use_real_schema_and_deployment_defaults()
         )
 
 
+def test_search_log_arguments_accept_official_flat_field_mapping() -> None:
+    schema = {
+        "From": {"type": "number"},
+        "To": {"type": "number"},
+        "Query": {"type": "string"},
+        "TopicId": {"type": "string"},
+        "Region": {"type": "string"},
+        "Limit": {"type": "number", "default": 10},
+    }
+    normalized = normalize_search_log_arguments(
+        {"query": 'trace_id:"trace-1"'},
+        schema=schema,
+        defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+        now_ms=lambda: 4_000_000,
+        fallback_query="*",
+    )
+    assert normalized == {
+        "From": 400_000,
+        "To": 4_000_000,
+        "Query": 'trace_id:"trace-1"',
+        "TopicId": "topic-real",
+        "Region": "ap-guangzhou",
+    }
+
+
+def test_search_log_arguments_convert_unix_seconds_to_milliseconds() -> None:
+    schema = {
+        "From": {"type": "number"},
+        "To": {"type": "number"},
+        "Query": {"type": "string"},
+        "Region": {"type": "string"},
+    }
+    normalized = normalize_search_log_arguments(
+        {"From": 1_787_472_000, "To": 1_787_480_100, "Query": "*"},
+        schema=schema,
+        defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+        now_ms=lambda: 1_787_480_100_000,
+        fallback_query="*",
+    )
+    assert normalized["From"] == 1_787_472_000_000
+    assert normalized["To"] == 1_787_480_100_000
+
+
+def test_search_log_arguments_reject_stale_model_time_window() -> None:
+    schema = {
+        "From": {"type": "number"},
+        "To": {"type": "number"},
+        "Query": {"type": "string"},
+        "Region": {"type": "string"},
+    }
+    normalized = normalize_search_log_arguments(
+        {"From": 1_724_486_988, "To": 1_724_494_188, "Query": "*"},
+        schema=schema,
+        defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+        now_ms=lambda: 1_787_480_100_000,
+        fallback_query="*",
+    )
+    assert normalized["From"] == 1_787_476_500_000
+    assert normalized["To"] == 1_787_480_100_000
+
+
 def test_evidence_rejects_unknown_payload_and_fallback_is_honest() -> None:
     with pytest.raises(ValueError, match="无法安全映射"):
         normalize_tool_evidence(
