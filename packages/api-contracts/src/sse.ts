@@ -1,6 +1,7 @@
 import manifest from "../contract-manifest.json";
 
 import type { ChatReference } from "./chat";
+import { DIAGNOSTIC_EVIDENCE_KINDS } from "./aiops";
 import type { DiagnosticEvidenceReference } from "./aiops";
 import { isApiError, isRecord } from "./http";
 import type { ApiError, JsonValue } from "./http";
@@ -168,7 +169,7 @@ function isChatReference(value: unknown): value is ChatReference {
 function isDiagnosticEvidenceReference(value: unknown): value is DiagnosticEvidenceReference {
   return isRecord(value)
     && typeof value.evidenceId === "string"
-    && ["alert", "knowledge", "log", "metric"].includes(String(value.kind))
+    && (DIAGNOSTIC_EVIDENCE_KINDS as readonly string[]).includes(String(value.kind))
     && typeof value.source === "string"
     && typeof value.title === "string"
     && typeof value.excerpt === "string"

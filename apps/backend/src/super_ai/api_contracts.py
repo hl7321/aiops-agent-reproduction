@@ -1044,21 +1044,15 @@ class ReferenceSource(ChatReference):
 
 
 class ReferenceSourceData(ContractModel):
-    source: ReferenceSource
+    source: ReferenceSource | DiagnosticEvidenceReference
+    # chat 与 aiops 两个频道共用 `reference.source` 这一个事件类型，因此这里按结构分流：
+    # chat 引用带 chunkId/rerankScore 等完整 citation 字段，诊断引用带 evidenceId/kind。
+    # 两者形状互斥，Pydantic 智能联合可唯一判定，无需再引入第二个事件类。
 
 
 class ReferenceSourceEvent(SseEventBase):
     type: Literal["reference.source"] = "reference.source"
     data: ReferenceSourceData
-
-
-class DiagnosticReferenceSourceData(ContractModel):
-    source: DiagnosticEvidenceReference
-
-
-class DiagnosticReferenceSourceEvent(SseEventBase):
-    type: Literal["reference.source"] = "reference.source"
-    data: DiagnosticReferenceSourceData
 
 
 class TaskStatusData(ContractModel):

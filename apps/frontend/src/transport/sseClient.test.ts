@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DIAGNOSTIC_EVIDENCE_KINDS } from "@super-ai/api-contracts";
 import type { ErrorEvent, SseEvent, ToolCallEvent } from "@super-ai/api-contracts";
 
 import { SseFrameParser, createSseClient } from "./sseClient";
@@ -35,6 +36,56 @@ const errorEvent: ErrorEvent = {
 };
 
 describe("SseFrameParser", () => {
+  it("接受 aiops 频道全部诊断证据种类的 reference.source 帧", () => {
+    for (const [index, kind] of DIAGNOSTIC_EVIDENCE_KINDS.entries()) {
+      const parser = new SseFrameParser();
+      const event = {
+        id: `evt-reference-${kind}`,
+        sequence: index + 1,
+        type: "reference.source",
+        channel: "aiops",
+        timestamp: "2026-08-07T12:00:00Z",
+        data: {
+          source: {
+            evidenceId: `evidence-${kind}`,
+            kind,
+            source: "SearchLog",
+            title: `${kind} 证据`,
+            excerpt: "样例证据摘要",
+            metadata: {},
+          },
+        },
+      };
+
+      // 解析器遇到不符合共享合同的 data 会抛错，这里必须逐种都能产出事件。
+      expect(parser.push(`data: ${JSON.stringify(event)}\n\n`)).toEqual([event]);
+    }
+  });
+
+  it("拒绝 aiops 频道未知诊断证据种类的 reference.source 帧", () => {
+    const parser = new SseFrameParser();
+    const event = {
+      id: "evt-reference-unknown",
+      sequence: 1,
+      type: "reference.source",
+      channel: "aiops",
+      timestamp: "2026-08-07T12:00:00Z",
+      data: {
+        source: {
+          evidenceId: "evidence-unknown",
+          kind: "private_kind",
+          source: "SearchLog",
+          title: "未知证据",
+          excerpt: "样例证据摘要",
+          metadata: {},
+        },
+      },
+    };
+
+    expect(() => parser.push(`data: ${JSON.stringify(event)}\n\n`))
+      .toThrowError("SSE data 不符合共享事件合同");
+  });
+
   it("保留跨 chunk 的半帧并在补齐后产出共享事件", () => {
     const parser = new SseFrameParser();
     const serialized = JSON.stringify(toolEvent);

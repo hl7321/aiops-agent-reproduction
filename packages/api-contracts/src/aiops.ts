@@ -7,14 +7,24 @@ import type { DocumentIndexTask } from "./document-indexing";
 
 export type DiagnosticStatus = "accepted" | "running" | "succeeded" | "failed" | "cancelled";
 export type DiagnosticStepStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
-export type DiagnosticEvidenceKind =
-  | "alert"
-  | "knowledge"
-  | "log"
-  | "log_hit"
-  | "log_context"
-  | "query_artifact"
-  | "metric";
+
+/**
+ * 诊断证据种类的运行时事实来源。
+ *
+ * 类型与运行时校验都必须引用这一份清单：SSE guard 需要真实存在的值做判断，
+ * 而 TypeScript 类型在运行时不存在，因此只能由常量派生类型，不能反向维护两份。
+ */
+export const DIAGNOSTIC_EVIDENCE_KINDS = [
+  "alert",
+  "knowledge",
+  "log",
+  "log_hit",
+  "log_context",
+  "query_artifact",
+  "metric",
+] as const;
+
+export type DiagnosticEvidenceKind = (typeof DIAGNOSTIC_EVIDENCE_KINDS)[number];
 export type DiagnosticReportGenerationMode = "model" | "fallback";
 export type DiagnosticReportTrustState =
   | "verified_evidence"

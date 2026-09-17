@@ -6,6 +6,7 @@ import {
   OPENAPI_PATHS,
   OPENAPI_SECURITY_SCHEMES,
   PROTECTED_PATH_POLICY,
+  DIAGNOSTIC_EVIDENCE_KINDS,
   SSE_EVENT_TYPES,
   TOOL_CALL_LIFECYCLES,
   isApiEnvelope,
@@ -436,6 +437,52 @@ describe("SSE 合同", () => {
       ...event,
       data: { source: { id: "chunk-1", title: "旧版临时引用" } },
     })).toBe(false);
+  });
+
+  it("aiops 频道的 reference.source 接受全部诊断证据种类", () => {
+    for (const kind of DIAGNOSTIC_EVIDENCE_KINDS) {
+      const event = {
+        id: `evt-reference-${kind}`,
+        sequence: 3,
+        type: "reference.source",
+        channel: "aiops",
+        timestamp: "2026-08-20T00:00:00Z",
+        data: {
+          source: {
+            evidenceId: `evidence-${kind}`,
+            kind,
+            source: "SearchLog",
+            title: `${kind} 证据`,
+            excerpt: "样例证据摘要",
+            metadata: {},
+          },
+        },
+      };
+
+      expect(isSseEvent(event)).toBe(true);
+    }
+  });
+
+  it("aiops 频道的 reference.source 拒绝未知诊断证据种类", () => {
+    const event = {
+      id: "evt-reference-unknown",
+      sequence: 4,
+      type: "reference.source",
+      channel: "aiops",
+      timestamp: "2026-08-20T00:00:00Z",
+      data: {
+        source: {
+          evidenceId: "evidence-unknown",
+          kind: "private_kind",
+          source: "SearchLog",
+          title: "未知证据",
+          excerpt: "样例证据摘要",
+          metadata: {},
+        },
+      },
+    };
+
+    expect(isSseEvent(event)).toBe(false);
   });
 
   it("error 事件直接复用 HTTP ApiError", () => {
