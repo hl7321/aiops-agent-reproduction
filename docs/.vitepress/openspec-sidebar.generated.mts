@@ -127,6 +127,14 @@ export const openspecSidebar = [
       {
         "text": "2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance",
         "link": "/changes/archive/2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance/"
+      },
+      {
+        "text": "2026-09-17-fix-aiops-evidence-reference-contract",
+        "link": "/changes/archive/2026-09-17-fix-aiops-evidence-reference-contract/"
+      },
+      {
+        "text": "2026-09-17-fix-aiops-query-artifact-and-tool-errors",
+        "link": "/changes/archive/2026-09-17-fix-aiops-query-artifact-and-tool-errors/"
       }
     ]
   },

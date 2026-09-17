@@ -477,7 +477,9 @@ class DiagnosticRuntime:
                     }
                     break
                 except Exception as error:
-                    failure = classify_tool_failure(error, phase=phase, attempt=attempt)
+                    failure = classify_tool_failure(
+                        error, phase=phase, attempt=attempt, arguments=invocation_arguments
+                    )
                     if step is None:
                         failed_step = PlanStep(
                             plan_step.position,

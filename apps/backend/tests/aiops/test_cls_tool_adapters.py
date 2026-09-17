@@ -106,6 +106,45 @@ def test_query_builder_extracts_only_fenced_cql_from_explanatory_markdown() -> N
     assert artifact.query == 'service:"payment-service" AND level:ERROR'
 
 
+def test_query_builder_unescapes_fenced_cql_from_raw_text_response() -> None:
+    """官方工具在纯文本响应里返回的代码块带 JSON 转义，必须还原后再当查询用。
+
+    这条覆盖的是真实失败路径：响应以 `SessionId:` 开头、不是合法 JSON，
+    解包退化为原文，围栏代码块会连同字面量 \\n 与 \\" 一起被取出。
+    还原前 CLS 会把 `\\nservice` 当成字段名 `nservice` 并报语法错误。
+    """
+    artifact = parse_text_to_search_log_query_result(
+        [
+            {
+                "type": "text",
+                "text": (
+                    "SessionId: 963dd2a4-d018-4e07-ad66-7d349e2ecb10\n"
+                    'Content: {"Choices":[{"Message":{"Content":'
+                    '"根据需求生成以下 CQL：\\\\n\\\\n```sql\\\\n'
+                    'service:\\\\"auth-service\\\\" AND level:\\\\"ERROR\\\\"'
+                    '\\\\n```\\\\n\\\\n解释说明不能进入查询。"}}]}'
+                ),
+            }
+        ]
+    )
+    assert artifact.query == 'service:"auth-service" AND level:"ERROR"'
+    assert "\\n" not in artifact.query
+    assert '\\"' not in artifact.query
+
+
+def test_query_builder_preserves_legitimate_backslashes() -> None:
+    """查询里本来就可能含合法反斜杠（例如正则片段），反转义不能误伤它们。"""
+    artifact = parse_text_to_search_log_query_result(
+        [
+            {
+                "type": "text",
+                "text": '```sql\nservice:"cart-service" AND message:/\\d+/\n```',
+            }
+        ]
+    )
+    assert artifact.query == 'service:"cart-service" AND message:/\\d+/'
+
+
 def test_query_builder_removes_projection_pipeline_to_preserve_raw_log_hits() -> None:
     artifact = parse_text_to_search_log_query_result(
         {

@@ -34,6 +34,8 @@
 - [2026-08-23-create-correlated-ecommerce-aiops-fixtures](./archive/2026-08-23-create-correlated-ecommerce-aiops-fixtures/)
 - [2026-08-23-publish-openspec-wiki](./archive/2026-08-23-publish-openspec-wiki/)
 - [2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance](./archive/2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance/)
+- [2026-09-17-fix-aiops-evidence-reference-contract](./archive/2026-09-17-fix-aiops-evidence-reference-contract/)
+- [2026-09-17-fix-aiops-query-artifact-and-tool-errors](./archive/2026-09-17-fix-aiops-query-artifact-and-tool-errors/)
 
 ## 主规格
 

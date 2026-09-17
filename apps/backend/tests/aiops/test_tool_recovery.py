@@ -93,3 +93,61 @@ def test_pydantic_validation_error_exposes_only_field_paths_and_types() -> None:
     assert "Query" in classified.safe_message
     assert "string_type" in classified.safe_message
     assert "12345" not in classified.safe_message
+
+
+class ToolExecutionError(Exception):
+    """模拟 MCP 工具返回的执行错误（服务端原话在消息里）。"""
+
+
+def test_failure_summary_keeps_server_reason_and_redacts_sensitive_arguments() -> None:
+    """失败摘要必须可读，同时抹掉敏感参数的取值。
+
+    只保留异常类型名会让 CLS 的语法错误彻底不可见，排查只能靠外部工具反推；
+    而 Region/TopicId 属于服务端权威参数，不该出现在落库的摘要与事件里。
+    """
+    server_message = (
+        "[TencentCloudSDKException]message:SyntaxError [field: nservice, "
+        "can not search on this field] region:ap-guangzhou "
+        "topicId:96b7b877-35a6-40e9-b043-a8ff59931653"
+    )
+    arguments = {
+        "Region": "ap-guangzhou",
+        "TopicId": "96b7b877-35a6-40e9-b043-a8ff59931653",
+        "Query": 'service:"auth-service"',
+    }
+
+    classified = classify_tool_failure(
+        ToolExecutionError(server_message), phase="invoke", attempt=1, arguments=arguments
+    )
+
+    # 可读原因保留
+    assert "SyntaxError" in classified.safe_message
+    assert "nservice" in classified.safe_message
+    # 敏感参数取值抹掉
+    assert "ap-guangzhou" not in classified.safe_message
+    assert "96b7b877-35a6-40e9-b043-a8ff59931653" not in classified.safe_message
+    # 分类与路由判定不受影响
+    assert classified.category == "transport"
+    assert classified.route == "retry_same_step"
+    assert classified.retryable is True
+
+
+def test_failure_summary_redacts_credentials_and_is_bounded() -> None:
+    arguments = {"Region": "ap-guangzhou"}
+    credential_leak = "Authorization: Bearer sk-super-secret " + "x" * 800
+
+    classified = classify_tool_failure(
+        ToolExecutionError(credential_leak), phase="invoke", attempt=1, arguments=arguments
+    )
+
+    assert "sk-super-secret" not in classified.safe_message
+    assert len(classified.safe_message) <= 500
+
+
+def test_failure_without_arguments_still_reports_server_reason() -> None:
+    classified = classify_tool_failure(
+        ToolExecutionError("remote said: field not indexed"), phase="invoke", attempt=1
+    )
+
+    assert "field not indexed" in classified.safe_message
+    assert classified.category == "transport"

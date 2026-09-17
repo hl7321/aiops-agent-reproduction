@@ -396,6 +396,119 @@ async def test_executor_repairs_pydantic_input_and_audits_both_attempts(
         await runtime.close()
 
 
+class FailingSearchModel:
+    """排一个 SearchLog 计划，三次失败后停止并出报告。"""
+
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        return PlanDraft(
+            steps=[
+                PlanStepDraft(
+                    toolName="SearchLog",
+                    purpose="查询告警日志",
+                    arguments={"Query": 'service:"auth-service"'},
+                )
+            ]
+        )
+
+    async def repair_tool_arguments(self, **kwargs: object) -> ToolArgumentRepairDraft:
+        raise AssertionError("服务端语法错误不应进入参数纠错")
+
+    async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft:
+        return ReplanDraft(action="report", reason="三次失败后停止")
+
+    async def report(self, *, context: str) -> ReportDraft:
+        raise RuntimeError("报告失败以走诚实兜底")
+
+
+class FailingSearchResolver:
+    """模拟 MCP 工具返回带敏感上下文的执行错误。"""
+
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id
+        assert builtin_tool_names == frozenset({"knowledge_retrieval"})
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float,
+            To: float,
+            Query: str,
+            Region: str,
+            TopicId: str = "",
+        ) -> object:
+            """查询真实测试边界日志。"""
+            raise RuntimeError(
+                "[TencentCloudSDKException]message:SyntaxError [field: nservice, "
+                f"can not search on this field] region:{Region} topicId:{TopicId}"
+            )
+
+        return (search_log,)
+
+
+async def test_failed_search_step_persists_readable_redacted_reason(tmp_path: Path) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'readable-failure.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            task = await SqliteDiagnosticRepository(session).create_task(
+                "owner", None, [{"alertName": "HighError"}]
+            )
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            FailingSearchResolver(),
+            FailingSearchModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        # 查日志这一步是"真的执行失败"，报告节点会以 SYSTEM_UNAVAILABLE 收尾；
+        # 步骤与失败摘要在此之前已经落库，因此断言不受影响。
+        with pytest.raises(AppError):
+            await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            steps = await SqliteDiagnosticRepository(session).list_steps("owner", task.id)
+
+        failed = [item for item in steps if item.status == "failed"]
+        assert len(failed) == 3
+        message = failed[0].error_message or ""
+        # 服务端原因可见
+        assert "SyntaxError" in message
+        assert "nservice" in message
+        # 敏感参数取值不可见
+        assert "ap-guangzhou" not in message
+        assert "topic-real" not in message
+    finally:
+        await runtime.close()
+
+
 async def test_empty_search_widens_to_owner_alert_correlation_identifier(
     tmp_path: Path,
 ) -> None:

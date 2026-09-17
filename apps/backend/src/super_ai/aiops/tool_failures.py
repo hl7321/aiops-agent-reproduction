@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
@@ -9,11 +10,18 @@ import httpx
 from pydantic import ValidationError
 
 from super_ai.aiops.models import ToolErrorCategory
+from super_ai.background_jobs.security import redact_error
 
 ToolFailureRoute: TypeAlias = Literal[
     "retry_same_step", "replan", "permanent_failure"
 ]
 ToolFailurePhase: TypeAlias = Literal["input", "invoke", "output", "empty"]
+
+# 服务端权威参数：它们的取值既不该由模型修改，也不该出现在失败摘要里。
+SENSITIVE_ARGUMENT_KEYS: frozenset[str] = frozenset(
+    {"region", "topicid", "topic_id", "logsetid", "logset_id"}
+)
+_SAFE_DETAIL_LIMIT = 300
 
 
 class ToolConfigurationError(ValueError):
@@ -50,37 +58,51 @@ def classify_tool_failure(
     *,
     phase: ToolFailurePhase | str,
     attempt: int,
+    arguments: Mapping[str, object] | None = None,
 ) -> ClassifiedToolFailure:
     if isinstance(error, ToolConfigurationError):
-        return _failure("configuration", "permanent_failure", False, error)
+        return _failure("configuration", "permanent_failure", False, error, arguments=arguments)
     if isinstance(error, ToolOwnerScopeError):
-        return _failure("owner_scope", "permanent_failure", False, error)
+        return _failure("owner_scope", "permanent_failure", False, error, arguments=arguments)
     if isinstance(error, ToolSchemaIncompatibleError):
-        return _failure("schema_incompatible", "permanent_failure", False, error)
+        return _failure(
+            "schema_incompatible", "permanent_failure", False, error, arguments=arguments
+        )
     if isinstance(error, ToolEmptyResultError):
-        return _failure("empty_result", "replan", False, error)
+        return _failure("empty_result", "replan", False, error, arguments=arguments)
     if isinstance(error, ToolOutputValidationError):
-        return _failure("output_validation", "permanent_failure", False, error)
+        return _failure("output_validation", "permanent_failure", False, error, arguments=arguments)
     if phase == "input" or isinstance(error, ValidationError):
-        return _failure("input_validation", "retry_same_step", True, error)
+        return _failure("input_validation", "retry_same_step", True, error, arguments=arguments)
     if phase == "empty":
-        return _failure("empty_result", "replan", False, error)
+        return _failure("empty_result", "replan", False, error, arguments=arguments)
     if isinstance(error, httpx.TimeoutException) or isinstance(error, TimeoutError):
-        return _failure("timeout", "retry_same_step", True, error, _delay(attempt))
+        return _failure(
+            "timeout", "retry_same_step", True, error, _delay(attempt), arguments=arguments
+        )
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         if status == 429:
-            return _failure("rate_limited", "retry_same_step", True, error, _delay(attempt))
+            return _failure(
+                "rate_limited", "retry_same_step", True, error, _delay(attempt), arguments=arguments
+            )
         if status >= 500:
             return _failure(
-                "provider_unavailable", "retry_same_step", True, error, _delay(attempt)
+                "provider_unavailable",
+                "retry_same_step",
+                True,
+                error,
+                _delay(attempt),
+                arguments=arguments,
             )
         if status in {401, 403}:
-            return _failure("permission", "permanent_failure", False, error)
-        return _failure("permanent", "permanent_failure", False, error)
+            return _failure("permission", "permanent_failure", False, error, arguments=arguments)
+        return _failure("permanent", "permanent_failure", False, error, arguments=arguments)
     if phase == "output":
-        return _failure("output_validation", "permanent_failure", False, error)
-    return _failure("transport", "retry_same_step", True, error, _delay(attempt))
+        return _failure("output_validation", "permanent_failure", False, error, arguments=arguments)
+    return _failure(
+        "transport", "retry_same_step", True, error, _delay(attempt), arguments=arguments
+    )
 
 
 def _delay(attempt: int) -> float:
@@ -95,14 +117,12 @@ def _failure(
     retryable: bool,
     error: Exception,
     delay: float = 0.0,
+    *,
+    arguments: Mapping[str, object] | None = None,
 ) -> ClassifiedToolFailure:
-    safe_detail = type(error).__name__
+    safe_detail = _safe_detail(error, arguments)
     if isinstance(error, ValidationError):
-        fields: list[str] = []
-        for item in error.errors(include_url=False, include_context=False, include_input=False):
-            location = ".".join(str(part) for part in item["loc"]) or "<root>"
-            fields.append(f"{location}:{item['type']}")
-        safe_detail = "fields=" + ",".join(fields[:20])
+        safe_detail = _validation_detail(error)
     return ClassifiedToolFailure(
         category=category,
         route=route,
@@ -110,3 +130,41 @@ def _failure(
         delay=delay,
         safe_message=f"{category}: {safe_detail}"[:500],
     )
+
+
+def _safe_detail(error: Exception, arguments: Mapping[str, object] | None) -> str:
+    """保留可读的失败原因，同时在落库前完成脱敏与截断。
+
+    只记录异常类型名会让服务端的可读错误（例如 CLS 的语法错误）彻底消失，
+    排查时只能看到 transport 这类笼统分类。这里保留有界摘要，但先过两道脱敏：
+    密钥类取值与敏感参数取值都不能出现在摘要里。
+    """
+    base = type(error).__name__
+    message = str(error).strip()
+    if not message:
+        return base
+    return f"{base}: {_redact_arguments(_redact_secrets(message), arguments)}"[:_SAFE_DETAIL_LIMIT]
+
+
+def _redact_secrets(message: str) -> str:
+    return redact_error(message, "{}")
+
+
+def _redact_arguments(message: str, arguments: Mapping[str, object] | None) -> str:
+    if not arguments:
+        return message
+    redacted = message
+    for key, value in arguments.items():
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if str(key).strip().casefold().replace("-", "_") in SENSITIVE_ARGUMENT_KEYS:
+            redacted = redacted.replace(value, "[redacted]")
+    return redacted
+
+
+def _validation_detail(error: ValidationError) -> str:
+    fields: list[str] = []
+    for item in error.errors(include_url=False, include_context=False, include_input=False):
+        location = ".".join(str(part) for part in item["loc"]) or "<root>"
+        fields.append(f"{location}:{item['type']}")
+    return "fields=" + ",".join(fields[:20])
