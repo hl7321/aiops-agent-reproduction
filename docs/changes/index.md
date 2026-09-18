@@ -2,6 +2,7 @@
 
 ## 进行中的变更
 
+- [fix-aiops-plan-completion-and-report-trust](./active/fix-aiops-plan-completion-and-report-trust/)
 - [handle-missing-log-context-locators](./active/handle-missing-log-context-locators/)
 
 ## 已归档变更

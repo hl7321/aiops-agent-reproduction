@@ -13,6 +13,10 @@ export const openspecSidebar = [
     "text": "进行中的变更",
     "items": [
       {
+        "text": "fix-aiops-plan-completion-and-report-trust",
+        "link": "/changes/active/fix-aiops-plan-completion-and-report-trust/"
+      },
+      {
         "text": "handle-missing-log-context-locators",
         "link": "/changes/active/handle-missing-log-context-locators/"
       }
