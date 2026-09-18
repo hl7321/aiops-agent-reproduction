@@ -70,7 +70,7 @@
 
 ## 10. 归档与文档
 
-- [ ] 10.1 用 `openspec-verify-change` 检查完整性、正确性与设计一致性，修复全部 CRITICAL 问题
-- [ ] 10.2 同步 delta specs 到主规格并按 Conventional Commits 提交
-- [ ] 10.3 运行 `wiki-sync` 同步 `docs/changes/`，并确认 `npm run docs:build` 通过
-- [ ] 10.4 归档变更并更新 Obsidian 笔记：进度总览、当前任务状态、已知问题与待改进
+- [x] 10.1 用 `openspec-verify-change` 检查完整性、正确性与设计一致性，修复全部 CRITICAL 问题
+- [x] 10.2 同步 delta specs 到主规格并按 Conventional Commits 提交
+- [x] 10.3 运行 `wiki-sync` 同步 `docs/changes/`，并确认 `npm run docs:build` 通过
+- [x] 10.4 归档变更并更新 Obsidian 笔记：进度总览、当前任务状态、已知问题与待改进

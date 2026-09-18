@@ -1,10 +1,3 @@
-## RENAMED Requirements
-
-### Requirement: AIOps 工具集合来自真实发现并按语义登记
-
-FROM: `AIOps 工具集合使用双层白名单`
-TO: `AIOps 工具集合来自真实发现并按语义登记`
-
 ## MODIFIED Requirements
 
 ### Requirement: AIOps 工具集合来自真实发现并按语义登记
@@ -27,6 +20,16 @@ TO: `AIOps 工具集合来自真实发现并按语义登记`
 
 - **WHEN** 一个工具的某些参数由服务端确定性注入
 - **THEN** 这些字段 MUST NOT 出现在模型可见的参数说明与必填列表中
+
+#### Scenario: 只读辅助工具可被规划
+
+- **WHEN** 计划需要先取得当前时间才能构造合法时间范围，且本轮真实发现并登记了时间戳转换类只读工具
+- **THEN** 该工具可以进入计划并被调用，其产出作为中间产物供后续步骤与 Replanner 使用，但不计入证据充分性判断
+
+#### Scenario: 写副作用工具仍被拒绝
+
+- **WHEN** 某个已发现工具具有外部写副作用
+- **THEN** 它不进入可用工具集合，也不出现在 Planner 可见的工具目录与计划中
 
 ### Requirement: Planner 按条件能力依赖而非固定三工具生成计划
 

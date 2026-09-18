@@ -15,10 +15,6 @@ export const openspecSidebar = [
       {
         "text": "handle-missing-log-context-locators",
         "link": "/changes/active/handle-missing-log-context-locators/"
-      },
-      {
-        "text": "restructure-aiops-plan-execute-replan",
-        "link": "/changes/active/restructure-aiops-plan-execute-replan/"
       }
     ]
   },
@@ -148,6 +144,10 @@ export const openspecSidebar = [
       {
         "text": "2026-09-18-expose-full-aiops-tool-schemas",
         "link": "/changes/archive/2026-09-18-expose-full-aiops-tool-schemas/"
+      },
+      {
+        "text": "2026-09-18-restructure-aiops-plan-execute-replan",
+        "link": "/changes/archive/2026-09-18-restructure-aiops-plan-execute-replan/"
       }
     ]
   },
