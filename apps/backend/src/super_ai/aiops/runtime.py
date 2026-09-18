@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, TypedDict, cast
 from uuid import uuid4
@@ -86,6 +87,8 @@ from super_ai.project_config import JsonValue
 from super_ai.retrieval.tool import create_knowledge_retrieval_tool
 from super_ai.runtime.logging import log_lifecycle
 from super_ai.tenancy.context import CurrentUser
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeSource(Protocol):
@@ -672,7 +675,14 @@ class DiagnosticRuntime:
                 }
                 if not set(evaluation.supporting_evidence_ids) <= linked_ids:
                     uncertainty = True
-            except Exception:
+            except Exception as error:
+                # 报告回退以前是静默的：任务仍然标记 succeeded，但页面只看到一份
+                # "证据不足"的兜底报告，无法判断是模型调用失败还是结构校验没过。
+                # 这里保留一条脱敏的告警日志，让回退原因可查。
+                logger.warning(
+                    "aiops report fallback",
+                    extra={"diagnosticTaskId": task_id, "reason": self._safe_message(error)},
+                )
                 markdown, evidence_ids = build_fallback_report(
                     list(task.alerts), evidence, steps
                 )
