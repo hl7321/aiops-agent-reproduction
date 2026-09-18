@@ -28,7 +28,7 @@ def _http_error(status: int) -> httpx.HTTPStatusError:
             ValidationError.from_exception_data("RequiredInput", []),
             "input",
             "input_validation",
-            "retry_same_step",
+            "repair_and_retry",
             True,
         ),
         (ValueError("空结果"), "empty", "empty_result", "replan", False),
@@ -151,3 +151,39 @@ def test_failure_without_arguments_still_reports_server_reason() -> None:
 
     assert "field not indexed" in classified.safe_message
     assert classified.category == "transport"
+
+
+def test_external_input_error_is_repairable_not_retryable_transport() -> None:
+    """外部服务以执行错误形式返回的入参问题，必须走"修正后重试"。
+
+    真实运行里 `MCP error -32602: Input validation error: Required at Region`
+    被当成可重试的传输错误，同一个必填字段缺失被原样重打满三次。
+    """
+    error = ToolExecutionError(
+        "_MCPToolExecutionError: MCP error -32602: Input validation error: "
+        "Invalid arguments for tool DescribeTopics: Required at Region"
+    )
+
+    classified = classify_tool_failure(error, phase="invoke", attempt=1)
+
+    assert classified.category == "input_validation"
+    assert classified.route == "repair_and_retry"
+    assert classified.failure_class == "repair"
+
+
+@pytest.mark.parametrize(
+    ("error", "phase", "expected_class"),
+    [
+        (httpx.TimeoutException("timeout"), "invoke", "retry"),
+        (ValidationError.from_exception_data("RequiredInput", []), "input", "repair"),
+        (ToolOwnerScopeError("cross owner"), "input", "permanent"),
+        (ValueError("空结果"), "empty", "empty"),
+    ],
+)
+def test_failure_class_is_exposed_for_execution_result(
+    error: Exception, phase: str, expected_class: str
+) -> None:
+    """执行结果需要能读到"原样重试 / 修正后重试 / 不可重试 / 空结果"。"""
+    classified = classify_tool_failure(error, phase=phase, attempt=1)
+
+    assert classified.failure_class == expected_class

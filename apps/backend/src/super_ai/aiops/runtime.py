@@ -543,7 +543,7 @@ class DiagnosticRuntime:
                         raise RuntimeError(failure.safe_message) from error
                     if failure.route == "replan" or attempt == 3:
                         break
-                    if failure.category == "input_validation":
+                    if failure.route == "repair_and_retry":
                         descriptor = tool_descriptors.get(plan_step.tool_name)
                         if descriptor is None:
                             raise RuntimeError("工具能力描述在恢复时不可用") from error

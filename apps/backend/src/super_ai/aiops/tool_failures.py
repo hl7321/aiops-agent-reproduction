@@ -13,9 +13,27 @@ from super_ai.aiops.models import ToolErrorCategory
 from super_ai.background_jobs.security import redact_error
 
 ToolFailureRoute: TypeAlias = Literal[
-    "retry_same_step", "replan", "permanent_failure"
+    "retry_same_step", "repair_and_retry", "replan", "permanent_failure"
 ]
+# 执行结果对外暴露的失败类别：原样重试 / 修正后重试 / 不可重试，外加空结果。
+ToolFailureClass: TypeAlias = Literal["retry", "repair", "permanent", "empty"]
 ToolFailurePhase: TypeAlias = Literal["input", "invoke", "output", "empty"]
+
+_CLASS_BY_ROUTE: dict[ToolFailureRoute, ToolFailureClass] = {
+    "retry_same_step": "retry",
+    "repair_and_retry": "repair",
+    "replan": "empty",
+    "permanent_failure": "permanent",
+}
+
+# 外部服务以执行错误形式返回的参数校验失败。MCP 用 JSON-RPC 的 -32602
+# （Invalid params）表示入参问题；这类失败必须走"修正后重试"，而不是被当成
+# 可重试的传输错误原样重打——真实运行里它曾让同一个必填字段缺失重试满三次。
+_MCP_INPUT_ERROR_MARKERS: tuple[str, ...] = (
+    "-32602",
+    "invalid arguments",
+    "input validation error",
+)
 
 # 服务端权威参数：它们的取值既不该由模型修改，也不该出现在失败摘要里。
 SENSITIVE_ARGUMENT_KEYS: frozenset[str] = frozenset(
@@ -52,6 +70,16 @@ class ClassifiedToolFailure:
     delay: float
     safe_message: str
 
+    @property
+    def failure_class(self) -> ToolFailureClass:
+        """执行结果里使用的失败类别。"""
+        return _CLASS_BY_ROUTE[self.route]
+
+
+def _is_external_input_error(error: Exception) -> bool:
+    message = str(error).casefold()
+    return any(marker in message for marker in _MCP_INPUT_ERROR_MARKERS)
+
 
 def classify_tool_failure(
     error: Exception,
@@ -73,7 +101,13 @@ def classify_tool_failure(
     if isinstance(error, ToolOutputValidationError):
         return _failure("output_validation", "permanent_failure", False, error, arguments=arguments)
     if phase == "input" or isinstance(error, ValidationError):
-        return _failure("input_validation", "retry_same_step", True, error, arguments=arguments)
+        return _failure(
+            "input_validation", "repair_and_retry", True, error, arguments=arguments
+        )
+    if _is_external_input_error(error):
+        return _failure(
+            "input_validation", "repair_and_retry", True, error, arguments=arguments
+        )
     if phase == "empty":
         return _failure("empty_result", "replan", False, error, arguments=arguments)
     if isinstance(error, httpx.TimeoutException) or isinstance(error, TimeoutError):

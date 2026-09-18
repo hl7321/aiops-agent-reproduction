@@ -20,7 +20,11 @@ from super_ai.aiops.planning import (
 from super_ai.aiops.reporting import build_fallback_report, validate_report
 from super_ai.aiops.router import map_job_event_to_sse
 from super_ai.aiops.runtime import _latest_query_artifact  # pyright: ignore[reportPrivateUsage]
-from super_ai.aiops.tool_adapters import adapt_allowed_tool_output
+from super_ai.aiops.tool_adapters import (
+    adapt_allowed_tool_output,
+    inject_server_provided_arguments,
+    validate_tool_arguments,
+)
 from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
 from super_ai.api_contracts import ERROR_DEFINITIONS, CreateDiagnosticRequest, TaskStatusData
 from super_ai.app import create_app
@@ -351,11 +355,77 @@ def test_auxiliary_artifact_is_never_used_as_search_query() -> None:
     assert _latest_query_artifact((auxiliary,)) is None
 
 
-def test_evidence_rejects_unknown_payload_and_fallback_is_honest() -> None:
-    with pytest.raises(ValueError, match="无法安全映射"):
-        normalize_tool_evidence(
-            tool_name="RestartService", result={"ok": True}, step_id="step", tool_call_id="call"
+def test_unregistered_tool_output_becomes_intermediate_artifact() -> None:
+    """未登记 adapter 的只读工具，产物按中间产物落库，不冒充证据。"""
+    records = normalize_tool_evidence(
+        tool_name="GetAlarmLog",
+        result={"Results": [{"Content": "告警执行详情"}]},
+        step_id="step",
+        tool_call_id="call",
+    )
+
+    assert len(records) == 1
+    assert records[0].kind == "query_artifact"
+    assert records[0].source == "GetAlarmLog"
+
+
+_GENERIC_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "Region": {"type": "string"},
+        "TopicId": {"type": "string"},
+        "Limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "Sort": {"type": "string", "enum": ["asc", "desc"]},
+    },
+    "required": ["Region"],
+}
+
+
+def test_generic_input_validation_rejects_bad_arguments() -> None:
+    """通用入参校验：未声明键、缺必填、类型、枚举与范围都要在调用前拦住。"""
+    with pytest.raises(ValueError, match="未声明的键"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {": ": "order-service", "Region": "ap-guangzhou"}
         )
+    with pytest.raises(ValueError, match="缺少必填字段"):
+        validate_tool_arguments("DescribeTopics", _GENERIC_SCHEMA, {"Limit": 10})
+    with pytest.raises(ValueError, match="类型应为 integer"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Limit": "10"}
+        )
+    with pytest.raises(ValueError, match="不得大于"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Limit": 500}
+        )
+    with pytest.raises(ValueError, match="取值必须属于"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Sort": "up"}
+        )
+
+    accepted = validate_tool_arguments(
+        "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Limit": 10}
+    )
+    assert accepted == {"Region": "ap-guangzhou", "Limit": 10}
+
+
+def test_server_provided_arguments_override_model_values() -> None:
+    """服务端权威字段无条件注入；模型填的同名值被忽略，未声明键被过滤。"""
+    merged = inject_server_provided_arguments(
+        "SearchLog",
+        _GENERIC_SCHEMA,
+        {"Region": "model-value", "TopicId": "model-topic", "Limit": 10, "Unknown": 1},
+        region="ap-guangzhou",
+        topic_id="topic-real",
+    )
+
+    assert merged == {
+        "Region": "ap-guangzhou",
+        "TopicId": "topic-real",
+        "Limit": 10,
+    }
+
+
+def test_fallback_report_is_honest() -> None:
     markdown, links = build_fallback_report([{"alertName": "HighError"}], [])
     assert "证据不足" in markdown
     assert "# 告警分析报告" in markdown

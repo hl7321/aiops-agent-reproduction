@@ -16,17 +16,23 @@ def _tool_named(name: str):
     return fake_tool
 
 
-def test_registry_is_dynamic_discovery_intersect_read_only_policy() -> None:
+def test_registry_takes_every_discovered_read_only_tool() -> None:
+    """工具集合来自真实发现：已登记的保留语义，未登记的只读工具同样可被规划。"""
     search = _tool_named("SearchLog")
     metric = _tool_named("QueryMetric")
+    listing = _tool_named("DescribeTopics")
     write_alert = _tool_named("CreateAlert")
     registry = build_aiops_tool_registry(
-        (search, metric, write_alert), policy=DEFAULT_AIOPS_TOOL_POLICY
+        (search, metric, listing, write_alert), policy=DEFAULT_AIOPS_TOOL_POLICY
     )
 
-    assert tuple(registry.tools) == ("SearchLog", "QueryMetric")
-    assert {item.capability for item in registry.catalog} == {"log_search", "metric_query"}
+    assert tuple(registry.tools) == ("SearchLog", "QueryMetric", "DescribeTopics")
     assert all(item.read_only for item in registry.catalog)
+    catalog = {item.name: item for item in registry.catalog}
+    assert catalog["SearchLog"].capability == "log_search"
+    # 未登记的工具按只读辅助工具处理，产物落中间产物
+    assert catalog["DescribeTopics"].capability == "auxiliary"
+    assert catalog["DescribeTopics"].artifact_kind == "query_artifact"
     assert "CreateAlert" not in registry.tools
 
 
@@ -138,16 +144,57 @@ def test_read_only_auxiliary_tools_enter_policy_and_catalog() -> None:
     assert catalog["DescribeIndex"].required_for_profile is False
 
 
-def test_tools_outside_policy_never_enter_catalog() -> None:
-    """未登记的工具（含任何写操作）一律不进入目录，模型无法规划。"""
-    write_tool = _tool_named("DeleteLogTopic")
-    write_tool.args_schema = {
-        "type": "object",
-        "properties": {"Region": {"type": "string"}, "TopicId": {"type": "string"}},
-        "required": ["Region", "TopicId"],
-    }
+def test_write_verb_tools_stay_out_of_the_catalog() -> None:
+    """写动词前缀的工具默认排除；只读动词前缀的未登记工具默认放行。"""
+    write_tools = ("DeleteLogTopic", "CreateAlarm", "UpdateIndex", "ModifyWebhook")
+    tools = tuple(_tool_named(name) for name in write_tools)
 
-    registry = build_aiops_tool_registry((write_tool,))
+    registry = build_aiops_tool_registry(tools)
 
     assert registry.tools == {}
     assert registry.catalog == ()
+
+
+def test_unregistered_read_only_tool_hides_server_provided_fields() -> None:
+    """未登记工具的可见说明同样隐藏 Region/TopicId，并从必填列表移除。"""
+    listing = _tool_named("DescribeAlarmShields")
+    listing.args_schema = {
+        "type": "object",
+        "properties": {
+            "Region": {"type": "string", "description": "地域"},
+            "AlarmNoticeId": {"type": "string", "description": "通知渠道组 ID"},
+        },
+        "required": ["Region", "AlarmNoticeId"],
+    }
+
+    registry = build_aiops_tool_registry((listing,))
+
+    schema = registry.catalog[0].input_schema
+    assert schema["properties"] == {
+        "AlarmNoticeId": {"type": "string", "description": "通知渠道组 ID"}
+    }
+    assert schema["required"] == ["AlarmNoticeId"]
+
+
+def test_cross_step_locators_are_visible_for_log_context() -> None:
+    """跨步骤产出（Time/PkgId/PkgLogId）不再是服务端注入，必须对模型可见。"""
+    context = _tool_named("DescribeLogContext")
+    context.args_schema = {
+        "type": "object",
+        "properties": {
+            "Region": {"type": "string"},
+            "TopicId": {"type": "string"},
+            "Time": {"type": "number", "description": "命中时间"},
+            "PkgId": {"type": "string", "description": "日志包 ID"},
+            "PkgLogId": {"type": "number", "description": "包内序号"},
+        },
+        "required": ["Region", "TopicId", "Time", "PkgId", "PkgLogId"],
+    }
+
+    registry = build_aiops_tool_registry((context,))
+
+    schema = registry.catalog[0].input_schema
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    assert set(properties) == {"Time", "PkgId", "PkgLogId"}
+    assert schema["required"] == ["Time", "PkgId", "PkgLogId"]

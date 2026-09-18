@@ -37,9 +37,35 @@ AUXILIARY_TOOL_NAMES: frozenset[str] = frozenset(
 )
 ToolArtifactKind = Literal["knowledge", "query_artifact", "log_hit", "log_context", "metric"]
 
+# 由服务端无条件注入、因此不出现在模型可见参数说明里的字段。
+# 只包含"账号级权威配置"：它们的取值来自 ignored 本地 JSON，模型既不该知道也不该覆盖。
+# 跨步骤产出（例如日志上下文需要的 Time/PkgId/PkgLogId）不在此列——那类值由执行者
+# 依据前序真实产出填写。
+SERVER_PROVIDED_ARGUMENTS: frozenset[str] = frozenset({"Region", "TopicId"})
+
+# 只读判定：真实发现工具的 MCP readOnlyHint 注解没有被 langchain-mcp-adapters 保留
+# （实测 Tool 上没有 annotations 字段），所以只能用真实发现给出的名称判定。
+# 这里采用白名单：只有以已知只读动词开头的工具才允许进入计划，未识别的默认排除。
+# 语义登记表里的显式登记优先于该判定——`TextToSearchLogQuery` 这类名字不含只读动词、
+# 但确实是只读查询的工具，靠登记放行。
+_READ_ONLY_NAME_PREFIXES: tuple[str, ...] = (
+    "get",
+    "describe",
+    "list",
+    "query",
+    "search",
+    "read",
+    "fetch",
+    "convert",
+)
+
 
 def _normalized_name(value: str) -> str:
     return re.sub(r"[_\-\s]+", "", value.casefold())
+
+
+def _looks_read_only(tool_name: str) -> bool:
+    return tool_name.strip().casefold().startswith(_READ_ONLY_NAME_PREFIXES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +117,9 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
         "log_context",
         True,
         ("log_search",),
-        # Time/PkgId/PkgLogId 来自本轮已验证的 SearchLog 命中，模型无法凭空知道。
-        server_provided_arguments=("Region", "TopicId", "Time", "PkgId", "PkgLogId"),
+        # Time/PkgId/PkgLogId 来自本轮已验证的 SearchLog 命中：它们不再是"服务端权威值"，
+        # 而是跨步骤产出，由执行者依据前序真实产出填写，因此必须对模型可见。
+        server_provided_arguments=("Region", "TopicId"),
     ),
     AiopsToolPolicyEntry(
         "QueryMetric",
@@ -113,7 +140,7 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
 class AiopsToolUnavailableError(ValueError):
     def __init__(self, tool_name: str) -> None:
         self.tool_name = tool_name
-        super().__init__(f"AIOps 工具当前未发现或未被只读取证 policy 允许: {tool_name}")
+        super().__init__(f"AIOps 工具当前未发现或不是本轮可用的只读工具: {tool_name}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,28 +160,43 @@ def build_aiops_tool_registry(
     *,
     policy: Sequence[AiopsToolPolicyEntry] = DEFAULT_AIOPS_TOOL_POLICY,
 ) -> AiopsToolRegistry:
-    """只保留本轮真实发现与静态只读 policy 的交集。"""
+    """以本轮真实发现作为工具集合，policy 只提供语义登记。
+
+    与旧实现的区别：不再用静态名单决定"谁可以被规划"。真实发现的只读工具全部进入
+    registry 与模型可见目录；语义登记表只负责说明已知工具的能力、依赖、产物类型与
+    服务端注入字段。未登记的工具按"只读动词前缀"判定，产物按中间产物处理。
+    """
     tools: dict[str, BaseTool] = {}
     descriptors: list[ToolCapabilityDescriptor] = []
     for tool in discovered:
         entry = next((item for item in policy if item.matches(tool.name)), None)
-        if entry is None or not entry.read_only:
+        read_only = entry.read_only if entry is not None else _looks_read_only(tool.name)
+        if not read_only:
             continue
         if tool.name in tools:
             raise ValueError(f"发现重复 AIOps 工具: {tool.name}")
+        capability: ToolCapability = entry.capability if entry is not None else "auxiliary"
+        artifact_kind: ToolArtifactKind = (
+            entry.artifact_kind if entry is not None else "query_artifact"
+        )
+        hidden = (
+            SERVER_PROVIDED_ARGUMENTS.union(entry.server_provided_arguments)
+            if entry is not None
+            else SERVER_PROVIDED_ARGUMENTS
+        )
         tools[tool.name] = tool
         descriptors.append(
             ToolCapabilityDescriptor(
                 name=tool.name,
                 description=(tool.description or "").strip()[:1000],
-                input_schema=_model_visible_schema(
-                    tool, frozenset(entry.server_provided_arguments)
+                input_schema=_model_visible_schema(tool, hidden),
+                capability=capability,
+                artifact_kind=artifact_kind,
+                read_only=True,
+                dependencies=entry.dependencies if entry is not None else (),
+                required_for_profile=(
+                    entry.required_for_profile if entry is not None else False
                 ),
-                capability=entry.capability,
-                artifact_kind=entry.artifact_kind,
-                read_only=entry.read_only,
-                dependencies=entry.dependencies,
-                required_for_profile=entry.required_for_profile,
             )
         )
     return AiopsToolRegistry(tools, tuple(descriptors))
