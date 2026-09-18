@@ -26,6 +26,27 @@ _CLASS_BY_ROUTE: dict[ToolFailureRoute, ToolFailureClass] = {
     "permanent_failure": "permanent",
 }
 
+# 按已落库的错误分类反推失败类别：执行结果需要它来说明"这次失败重试有没有用"。
+_CLASS_BY_CATEGORY: dict[ToolErrorCategory, ToolFailureClass] = {
+    "input_validation": "repair",
+    "output_validation": "permanent",
+    "empty_result": "empty",
+    "timeout": "retry",
+    "rate_limited": "retry",
+    "transport": "retry",
+    "provider_unavailable": "retry",
+    "configuration": "permanent",
+    "permission": "permanent",
+    "owner_scope": "permanent",
+    "tool_not_allowed": "permanent",
+    "schema_incompatible": "permanent",
+    "permanent": "permanent",
+}
+
+
+def failure_class_of(category: ToolErrorCategory | None) -> ToolFailureClass | None:
+    return _CLASS_BY_CATEGORY.get(category) if category is not None else None
+
 # 外部服务以执行错误形式返回的参数校验失败。MCP 用 JSON-RPC 的 -32602
 # （Invalid params）表示入参问题；这类失败必须走"修正后重试"，而不是被当成
 # 可重试的传输错误原样重打——真实运行里它曾让同一个必填字段缺失重试满三次。

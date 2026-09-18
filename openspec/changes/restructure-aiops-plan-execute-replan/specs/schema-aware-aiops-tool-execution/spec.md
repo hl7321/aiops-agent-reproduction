@@ -66,6 +66,11 @@ Planner SHALL 获得本轮真实发现的只读工具的名称、描述与完整
 - **WHEN** Planner 输出的工具名在大小写或分隔符上与真实发现名称不同，但按登记表的宽松匹配规则等价
 - **THEN** 计划校验接受该工具名，而不是以"引用未注册工具"拒绝
 
+#### Scenario: 模型看到的工具参数说明
+
+- **WHEN** 系统把可用工具交给 Planner 或执行者的填参调用
+- **THEN** 每个字段都携带官方 schema 提供的用途说明与约束（类型、枚举、格式、默认值），必填项与官方一致；`Region`、`TopicId` 等由服务端注入的字段不出现在该说明与必填列表中
+
 ### Requirement: 所有允许工具校验输入且所有产物显式适配
 
 每个可执行工具 SHALL 在调用前按其真实 runtime schema 做通用入参校验，至少覆盖：必填字段齐全、拒绝 schema 未声明的键、值类型匹配、声明了取值范围或枚举时取值合法。该通用校验 MUST 对被规划的全部工具生效，MUST NOT 只覆盖少数核心工具。核心 `TextToSearchLogQuery`、`SearchLog`、`DescribeLogContext` MAY 在此之上继续使用显式 Pydantic 输入模型与语义规范化。
@@ -102,11 +107,21 @@ Planner SHALL 获得本轮真实发现的只读工具的名称、描述与完整
 - **WHEN** 计划使用一个真实发现但未登记输出 adapter 的只读工具并成功返回
 - **THEN** 系统把该产物按中间产物持久化，它可被后续步骤与重规划使用，但不计入证据充分性判断
 
+#### Scenario: 模型参数不合规
+
+- **WHEN** 模型给出的参数缺少必填项、类型不符、时间单位错误或字段名不在官方 schema 中
+- **THEN** 系统直接以校验错误失败并把错误与完整参数说明交回模型修正，不静默补齐默认值、不改写字段名、不换算单位
+
 ### Requirement: CLS 权威参数由服务端确定性传递
 
 当前运行时 SHALL 继续从 ignored 本地 JSON 深合并后的 `clsLogUpload.region` 与 `clsLogUpload.topicId` 取得可信默认值，不新增远端日志源发现或路由。Region 与 TopicId MUST 由服务端无条件注入，模型和客户端 MUST NOT 覆盖，且 MUST NOT 出现在模型可见的参数说明中。
 
-依赖前面步骤真实产出的字段（SearchLog 的时间范围与查询、DescribeLogContext 的 Time/PkgId/PkgLogId 等）SHALL 由执行者在执行该步骤时依据前序产出填写，MUST NOT 在计划阶段预先写死。执行者填写的值 MUST 通过该工具的真实 schema 校验后才可调用。
+依赖前面步骤真实产出的字段 SHALL 由执行者在执行该步骤时提供，MUST NOT 在计划阶段预先写死。执行者 MUST 按字段性质区分来源：
+
+- **计划保证的跨步配对**（SearchLog 的 Query 来自其必需的 query-builder 步骤产出、DescribeLogContext 的 Time/PkgId/PkgLogId 来自本轮已验证的 SearchLog 命中）MUST 由执行者**确定性绑定**，MUST NOT 交给模型生成，也 MUST NOT 出现在模型可见的参数说明中——这些是"搬运"而不是"判断"，交给模型只会让计划校验要求的步骤失去意义。
+- **其余需要判断的字段**（时间窗、返回条数、自然语言检索意图、其他工具自有的参数）SHALL 由执行者依据当前工具说明与前序产出生成。
+
+无论来源如何，最终参数 MUST 通过该工具的真实 schema 校验后才可调用。
 
 #### Scenario: 上下文参数装配
 
@@ -118,10 +133,20 @@ Planner SHALL 获得本轮真实发现的只读工具的名称、描述与完整
 - **WHEN** 计划需要 SearchLog 或 DescribeLogContext，但 `clsLogUpload.region` 或 `clsLogUpload.topicId` 为空
 - **THEN** 诊断在调用该 CLS 工具前以明确配置错误失败，不让模型猜测或从日志正文反推
 
+#### Scenario: 模型提供了服务端权威字段
+
+- **WHEN** 模型在执行参数里给出 `Region` 或 `TopicId`
+- **THEN** 系统忽略该取值并以本地配置注入值为准，且这两个字段不出现在模型可见的参数说明中
+
 #### Scenario: 跨步骤参数由执行者填写
 
 - **WHEN** 执行者执行一个需要前面步骤产出的步骤
-- **THEN** 它从前面步骤的真实产出中取值并填入，填入值通过该工具真实 schema 校验后才执行
+- **THEN** 属于计划保证配对的字段被确定性绑定、其余字段由模型依据前序产出生成，全部通过该工具真实 schema 校验后才执行
+
+#### Scenario: 绑定字段不接受模型取值
+
+- **WHEN** 模型为已由执行者绑定的字段（例如 SearchLog 的 Query）给出别的取值
+- **THEN** 执行者以绑定值为准，模型取值被忽略，且该字段不出现在模型可见的参数说明中
 
 ### Requirement: 工具纠错与重试有界且可审计
 

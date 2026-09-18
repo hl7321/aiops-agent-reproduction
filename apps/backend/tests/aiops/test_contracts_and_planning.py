@@ -11,7 +11,7 @@ from super_ai.aiops.planning import (
     PlanStepDraft,
     ReportDraft,
     SearchLogQueryDefaults,
-    ToolArgumentRepairDraft,
+    StepArgumentsDraft,
     create_validated_plan,
     find_search_log_tool,
     normalize_search_log_arguments,
@@ -77,88 +77,105 @@ def test_request_requires_query_or_real_alert_and_bounded_progress() -> None:
 def test_plan_requires_one_registered_search_log() -> None:
     draft = PlanDraft(
         steps=[
-            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={"q": "x"}),
-            PlanStepDraft(toolName="QueryMetric", purpose="查询指标", arguments={}),
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成检索语句"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志"),
+            PlanStepDraft(toolName="QueryMetric", purpose="查询指标"),
         ]
     )
     assert find_search_log_tool(("QueryMetric", "Search_Log")) == "Search_Log"
-    assert len(validate_plan(draft, ("SearchLog", "QueryMetric"))) == 2
+    steps = validate_plan(
+        draft, ("TextToSearchLogQuery", "SearchLog", "QueryMetric")
+    )
+    assert len(steps) == 3
+    # 计划阶段不产出任何参数值：参数由执行者在执行该步骤时生成。
+    assert [step.arguments for step in steps] == [{}, {}, {}]
     with pytest.raises(ValueError, match="只能包含一个"):
         validate_plan(
             PlanDraft(
                 steps=[
-                    PlanStepDraft(toolName="SearchLog", purpose="一", arguments={}),
-                    PlanStepDraft(toolName="search_log", purpose="二", arguments={}),
+                    PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成"),
+                    PlanStepDraft(toolName="SearchLog", purpose="一"),
+                    PlanStepDraft(toolName="search_log", purpose="二"),
                 ]
             ),
-            ("SearchLog", "search_log"),
+            ("TextToSearchLogQuery", "SearchLog", "search_log"),
         )
 
 
-def test_plan_requires_query_builder_only_for_untrusted_query() -> None:
-    direct = PlanDraft(
-        steps=[PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={})]
-    )
+def test_query_builder_is_always_required_before_log_search() -> None:
+    """统一成一条路：凡日志检索，必须先有一次生成查询的步骤。"""
+    direct = PlanDraft(steps=[PlanStepDraft(toolName="SearchLog", purpose="查询真实日志")])
     with pytest.raises(ValueError, match="TextToSearchLogQuery"):
-        validate_plan(
-            direct,
-            ("TextToSearchLogQuery", "SearchLog"),
-            query_is_trusted=False,
-        )
+        validate_plan(direct, ("TextToSearchLogQuery", "SearchLog"))
 
     built = PlanDraft(
         steps=[
-            PlanStepDraft(
-                toolName="TextToSearchLogQuery", purpose="生成查询", arguments={}
-            ),
-            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={}),
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志"),
         ]
     )
-    assert len(
-        validate_plan(
-            built,
-            ("TextToSearchLogQuery", "SearchLog"),
-            query_is_trusted=False,
-        )
-    ) == 2
-    with pytest.raises(ValueError, match="无需重复"):
-        validate_plan(
-            built,
-            ("TextToSearchLogQuery", "SearchLog"),
-            query_is_trusted=True,
-        )
+    assert len(validate_plan(built, ("TextToSearchLogQuery", "SearchLog"))) == 2
+
+    reversed_plan = PlanDraft(
+        steps=[
+            PlanStepDraft(toolName="SearchLog", purpose="先检索"),
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="后生成"),
+        ]
+    )
+    with pytest.raises(ValueError, match="TextToSearchLogQuery"):
+        validate_plan(reversed_plan, ("TextToSearchLogQuery", "SearchLog"))
+
+
+def test_unregistered_tool_is_rejected_with_available_names() -> None:
+    draft = PlanDraft(steps=[PlanStepDraft(toolName="RestartService", purpose="重启服务")])
+
+    with pytest.raises(ValueError, match="未发现的工具"):
+        validate_plan(draft, ("TextToSearchLogQuery", "SearchLog"))
+
+
+def test_tool_name_matching_is_loose_and_resolves_to_real_names() -> None:
+    """工具名匹配与语义登记表使用同一套归一化规则。"""
+    draft = PlanDraft(
+        steps=[
+            PlanStepDraft(toolName="text_to_search_log_query", purpose="生成查询"),
+            PlanStepDraft(toolName="search_log", purpose="检索日志"),
+        ]
+    )
+
+    steps = validate_plan(draft, ("TextToSearchLogQuery", "SearchLog"))
+
+    assert [step.tool_name for step in steps] == ["TextToSearchLogQuery", "SearchLog"]
 
 
 def test_temporal_claim_requires_context_after_search() -> None:
     missing = PlanDraft(
         requiresTemporalContext=True,
-        steps=[PlanStepDraft(toolName="SearchLog", purpose="查询日志", arguments={})],
+        steps=[
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询日志"),
+        ],
     )
     with pytest.raises(ValueError, match="DescribeLogContext"):
-        validate_plan(
-            missing,
-            ("SearchLog", "DescribeLogContext"),
-            query_is_trusted=True,
-        )
+        validate_plan(missing, ("TextToSearchLogQuery", "SearchLog", "DescribeLogContext"))
 
     valid = PlanDraft(
         requiresTemporalContext=True,
         steps=[
-            PlanStepDraft(toolName="SearchLog", purpose="查询日志", arguments={}),
-            PlanStepDraft(
-                toolName="DescribeLogContext", purpose="验证调用时序", arguments={}
-            ),
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询日志"),
+            PlanStepDraft(toolName="DescribeLogContext", purpose="验证调用时序"),
         ],
     )
-    assert [step.tool_name for step in validate_plan(
-        valid,
-        ("SearchLog", "DescribeLogContext"),
-        query_is_trusted=True,
-    )] == ["SearchLog", "DescribeLogContext"]
+    assert [
+        step.tool_name
+        for step in validate_plan(
+            valid, ("TextToSearchLogQuery", "SearchLog", "DescribeLogContext")
+        )
+    ] == ["TextToSearchLogQuery", "SearchLog", "DescribeLogContext"]
 
 
 async def test_planner_validation_correction_is_bounded_to_three_attempts() -> None:
-    descriptor = ToolCapabilityDescriptor(
+    search_descriptor = ToolCapabilityDescriptor(
         name="SearchLog",
         description="查询日志",
         input_schema={"type": "object", "properties": {}, "required": []},
@@ -168,6 +185,17 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
         dependencies=(),
         required_for_profile=True,
     )
+    builder_descriptor = ToolCapabilityDescriptor(
+        name="TextToSearchLogQuery",
+        description="生成检索语句",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        capability="query_builder",
+        artifact_kind="query_artifact",
+        read_only=True,
+        dependencies=(),
+        required_for_profile=False,
+    )
+    catalog = (builder_descriptor, search_descriptor)
 
     class CorrectingModel:
         def __init__(self, succeeds: bool) -> None:
@@ -183,17 +211,24 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
         ) -> PlanDraft:
             assert context and tool_catalog
             self.errors.append(tuple(validation_errors))
-            name = "SearchLog" if self.succeeds and len(self.errors) == 3 else "UnknownTool"
+            plan_steps = (
+                [("TextToSearchLogQuery", "生成查询"), ("SearchLog", "查询真实日志")]
+                if self.succeeds and len(self.errors) == 3
+                else [("UnknownTool", "查询")]
+            )
             return PlanDraft(
-                steps=[PlanStepDraft(toolName=name, purpose="查询", arguments={})]
+                steps=[
+                    PlanStepDraft(toolName=name, purpose=purpose)
+                    for name, purpose in plan_steps
+                ]
             )
 
         async def replan(self, **_kwargs: object):  # pragma: no cover - protocol filler
             raise AssertionError
 
-        async def repair_tool_arguments(
+        async def fill_step_arguments(
             self, **_kwargs: object
-        ) -> ToolArgumentRepairDraft:  # pragma: no cover - protocol filler
+        ) -> StepArgumentsDraft:  # pragma: no cover - protocol filler
             raise AssertionError
 
         async def report(self, **_kwargs: object):  # pragma: no cover - protocol filler
@@ -203,12 +238,11 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
     plan = await create_validated_plan(
         corrected,
         context="安全上下文",
-        tool_catalog=(descriptor,),
-        query_is_trusted=True,
+        tool_catalog=catalog,
     )
-    assert plan[0].tool_name == "SearchLog"
+    assert [step.tool_name for step in plan] == ["TextToSearchLogQuery", "SearchLog"]
     assert corrected.errors[0] == ()
-    assert "未注册工具" in corrected.errors[1][0]
+    assert "未发现的工具" in corrected.errors[1][0]
     assert len(corrected.errors) == 3
 
     never_valid = CorrectingModel(False)
@@ -216,8 +250,7 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
         await create_validated_plan(
             never_valid,
             context="安全上下文",
-            tool_catalog=(descriptor,),
-            query_is_trusted=True,
+            tool_catalog=catalog,
         )
     assert len(never_valid.errors) == 3
 

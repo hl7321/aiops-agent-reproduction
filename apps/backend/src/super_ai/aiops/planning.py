@@ -5,19 +5,23 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from super_ai.aiops.models import DiagnosticEvidenceRecord, PlanStep
-from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
+from super_ai.aiops.tool_policy import ToolCapabilityDescriptor, normalized_tool_name
 from super_ai.aiops.tool_schema import tool_schema_properties, tool_schema_required
 from super_ai.api_contracts import DiagnosticReplanAction
 
 MAX_PLAN_STEPS = 8
 MAX_REPLANS = 3
+# 每个计划步骤（按步骤位置计）最多两次尝试：第一次失败后只给一次重试机会。
+# 分类已经把"不值得重试的"拦在一次以内，剩下需要第二次机会的主要是瞬时错误；
+# 同时把最坏情况的调用数压在 8 步 × 2 = 16 次以内。
+MAX_STEP_ATTEMPTS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,16 +73,49 @@ def _empty_plan_steps() -> list[PlanStepDraft]:
 class PlanStepDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    tool_name: str = Field(alias="toolName", min_length=1, max_length=128)
-    purpose: str = Field(min_length=1, max_length=500)
-    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    tool_name: str = Field(
+        alias="toolName",
+        min_length=1,
+        max_length=128,
+        description="要使用的工具名。必须与「可用工具清单」中出现过的名称完全一致。",
+    )
+    purpose: str = Field(
+        min_length=1,
+        max_length=500,
+        description="这一步要拿到什么信息、供后面哪一步使用，一句话说清。",
+    )
 
 
 class PlanDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    steps: list[PlanStepDraft] = Field(min_length=1, max_length=MAX_PLAN_STEPS)
-    requires_temporal_context: bool = Field(default=False, alias="requiresTemporalContext")
+    steps: list[PlanStepDraft] = Field(
+        min_length=1,
+        max_length=MAX_PLAN_STEPS,
+        description="按执行顺序排列的步骤清单。每一步只说明用哪个工具、为什么用，不含参数值。",
+    )
+    requires_temporal_context: bool = Field(
+        default=False,
+        alias="requiresTemporalContext",
+        description=(
+            "这份计划是否需要事件前后顺序的证据。"
+            "只有结论依赖调用顺序、重试、熔断或恢复时才填 true。"
+        ),
+    )
+
+
+class StepArgumentsDraft(BaseModel):
+    """执行者为当前这一步生成的工具参数。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    arguments: dict[str, JsonValue] = Field(
+        default_factory=dict,
+        description=(
+            "要交给当前工具执行的参数。键必须是该工具参数说明里出现过的字段名；"
+            "说明里标了必填的必须提供；取值按说明的类型与取值范围。"
+        ),
+    )
 
 
 class ReplanDraft(BaseModel):
@@ -88,11 +125,6 @@ class ReplanDraft(BaseModel):
     steps: list[PlanStepDraft] = Field(default_factory=_empty_plan_steps)
     reason: str = Field(min_length=1, max_length=500)
     requires_temporal_context: bool = Field(default=False, alias="requiresTemporalContext")
-
-
-class ToolArgumentRepairDraft(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    arguments: dict[str, JsonValue]
 
 
 class ReportClaimDraft(BaseModel):
@@ -125,14 +157,15 @@ class DiagnosticModel(Protocol):
         validation_errors: Sequence[str] = (),
     ) -> PlanDraft: ...
 
-    async def repair_tool_arguments(
+    async def fill_step_arguments(
         self,
         *,
         context: str,
         tool: ToolCapabilityDescriptor,
-        argument_keys: Sequence[str],
-        validation_errors: Sequence[str],
-    ) -> ToolArgumentRepairDraft: ...
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft: ...
 
     async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft: ...
 
@@ -144,6 +177,63 @@ class QwenDiagnosticModel:
 
     def __init__(self, model: BaseChatModel) -> None:
         self._model = model
+
+    async def fill_step_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft:
+        runnable = self._model.with_structured_output(StepArgumentsDraft)
+        plan_view = [
+            {"step": item.position, "tool": item.tool_name, "purpose": item.purpose}
+            for item in plan
+        ]
+        result = await runnable.ainvoke(
+            [
+                SystemMessage(
+                    content=(
+                        "【角色定义】\n"
+                        "你是 AIOps 诊断的执行者。规划者已经定好了用哪些工具、按什么顺序查，"
+                        "你站在执行位置：你不决定用什么工具，也不改顺序，完全按计划执行。"
+                        "你只负责一件事——把当前这一步真正跑起来，办法是给它生成一份"
+                        "能直接调用的参数。\n\n"
+                        "【任务】\n"
+                        "为当前这一步生成一份能直接交给工具执行的参数。\n\n"
+                        "【该做什么】\n"
+                        "1. 先看当前这一步是哪个工具、要拿到什么信息。\n"
+                        "2. 看前面步骤的真实产出。这一步要用的值必须从里面原样取，不要自己编。\n"
+                        "3. 看整份计划，理解这一步的产出会被后面哪一步用到。\n"
+                        "4. 按当前工具的完整参数说明填：说明里标了必填的一定要填；类型与取值范围"
+                        "按说明来；只填当前这个工具的参数；说明里没出现的字段不要自己造。\n"
+                        "5. 如果给了「上一次的错误」，只针对那个错误修正，其他地方不要动。\n"
+                        "6. 填不出来的字段不要瞎编。\n\n"
+                        "【输出结果】\n"
+                        "arguments：要交给当前工具执行的参数。\n"
+                        "- 键必须是该工具参数说明里出现过的，不能自己造键名。\n"
+                        "- 说明里标了必填的必须填上。\n"
+                        "- 值的类型要跟说明一致。\n"
+                        "- 这一步要用的值如果在前面的产出里，必须原样取过来，不要改写。\n"
+                        "交出去之前自己检查一遍：有没有自创的键名？必填都填了吗？"
+                        "每个值真的来自前面产出或告警吗？"
+                    )
+                ),
+                HumanMessage(
+                    content=(
+                        f"【当前这一步】第 {step.position} 步 / 工具 {tool.name} / "
+                        f"用途：{step.purpose}\n"
+                        f"【当前工具的完整说明】{_catalog_payload((tool,))}\n"
+                        f"【整份计划】{plan_view}\n"
+                        f"【上下文】\n{context}\n"
+                        f"【上一次的错误】{previous_error or '无'}"
+                    )
+                ),
+            ]
+        )
+        return StepArgumentsDraft.model_validate(result)
 
     async def plan(
         self,
@@ -157,51 +247,51 @@ class QwenDiagnosticModel:
             [
                 SystemMessage(
                     content=(
-                        "你是证据优先的 AIOps Planner。只使用给出的工具，生成 1 到 8 步计划；"
-                        "计划必须且只能包含一个真实 SearchLog 类工具步骤。"
-                        "未验证查询先用 query_builder；仅当结论依赖调用顺序、重试、"
-                        "熔断或恢复时才声明 requiresTemporalContext 并在 SearchLog 后使用"
-                        " log_context。"
+                        "【角色定义】\n"
+                        "你是 AIOps 诊断的规划者。你面前有一条已经触发的告警、一份同类故障的"
+                        "处理经验（SOP），以及一份来自日志平台的真实工具清单。"
+                        "你站在整条链路的起点：你只决定用哪些工具、按什么顺序查，不负责真正去查。"
+                        "真正调用工具的是执行者，它会在执行到那一步时才去填具体参数。\n\n"
+                        "【任务】\n"
+                        "产出一份诊断计划：用哪几个工具、按什么顺序、每一步是为了拿到什么信息。\n\n"
+                        "【该做什么】\n"
+                        "1. 先读懂告警：哪个服务、什么现象、严重程度。\n"
+                        "2. 读 SOP。它是同一类故障的处理经验，优先按它的思路选工具和顺序；"
+                        "若检索到多份 SOP，先判断哪一份与当前告警是同一类故障，只参考那一份。\n"
+                        "3. 从工具清单里选工具。清单里有名字的才能用，工具名必须一字不差照抄。\n"
+                        "4. 排好步骤顺序，想清楚这一步的产出后面哪一步要用。\n"
+                        "5. 每一步写一句用途，说清要拿到什么信息、给后面哪一步用。\n"
+                        "6. 不要填任何工具参数。参数由执行者在那一步真正执行时填，"
+                        "你现在写的值一定是凭空猜的，所以不要写。\n"
+                        "7. 硬性约束（必须满足，否则计划会被打回重做）：\n"
+                        "   - 步骤数在 1 到 8 之间；\n"
+                        "   - 必须且只能有一个日志检索步骤；\n"
+                        "   - 要做日志检索，就必须在它前面放一个生成查询的步骤；\n"
+                        "   - 只有结论依赖调用顺序、重试、熔断或恢复这类时序判断时，"
+                        "才在日志检索之后加一个查日志上下文的步骤；\n"
+                        "   - 不要为了凑步骤而加工具。\n\n"
+                        "【输出结果】\n"
+                        "steps：按执行顺序排列的步骤清单，每一步包含：\n"
+                        "  - toolName：工具名，必须与清单中出现的名称完全一致（大小写一致）；\n"
+                        "  - purpose：这一步要拿到什么信息、给后面哪一步用，一句话说清；\n"
+                        "    合格示例：「查 order-service 的日志主题 ID，供第 3 步使用」；\n"
+                        "    不合格示例：「查一下主题」。\n"
+                        "requiresTemporalContext：这份计划是否需要事件前后顺序的证据。\n"
+                        "交出去之前自己检查一遍：步骤数在 1 到 8 之间吗？每个 toolName 都能"
+                        "在清单里原样找到吗？有且只有一个日志检索步骤吗？它前面有生成查询的"
+                        "步骤吗？每一步的 purpose 都写清了给谁用吗？"
                     )
                 ),
                 HumanMessage(
                     content=(
-                        f"可用能力：{_catalog_payload(tool_catalog)}\n"
-                        f"上次计划校验错误：{list(validation_errors)}\n"
-                        f"安全上下文：\n{context}"
+                        f"【可用工具清单】{_catalog_payload(tool_catalog)}\n"
+                        f"【上一次计划被打回的原因】{list(validation_errors) or '无'}\n"
+                        f"【上下文】\n{context}"
                     )
                 ),
             ]
         )
         return PlanDraft.model_validate(result)
-
-    async def repair_tool_arguments(
-        self,
-        *,
-        context: str,
-        tool: ToolCapabilityDescriptor,
-        argument_keys: Sequence[str],
-        validation_errors: Sequence[str],
-    ) -> ToolArgumentRepairDraft:
-        runnable = self._model.with_structured_output(ToolArgumentRepairDraft)
-        result = await runnable.ainvoke(
-            [
-                SystemMessage(
-                    content=(
-                        "修正只读 AIOps 工具的非权威参数。只依据允许 Schema 和字段错误；"
-                        "不得生成 Region、TopicId、owner、凭据或跨步骤定位字段。"
-                    )
-                ),
-                HumanMessage(
-                    content=(
-                        f"工具：{_catalog_payload((tool,))}\n"
-                        f"现有参数键：{list(argument_keys)}\n"
-                        f"校验错误：{list(validation_errors)}\n上下文：{context}"
-                    )
-                ),
-            ]
-        )
-        return ToolArgumentRepairDraft.model_validate(result)
 
     async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft:
         runnable = self._model.with_structured_output(ReplanDraft)
@@ -242,29 +332,38 @@ class QwenDiagnosticModel:
 def validate_plan(
     draft: PlanDraft,
     registered_tool_names: Sequence[str],
-    *,
-    query_is_trusted: bool = True,
 ) -> tuple[PlanStep, ...]:
-    registered = set(registered_tool_names)
+    if not 1 <= len(draft.steps) <= MAX_PLAN_STEPS:
+        raise ValueError("诊断计划必须包含 1 到 8 步")
+    unknown = sorted(
+        {
+            item.tool_name
+            for item in draft.steps
+            if resolve_tool_name(item.tool_name, registered_tool_names) is None
+        }
+    )
+    if unknown:
+        raise ValueError(
+            f"诊断计划引用了本轮未发现的工具: {', '.join(unknown)}；"
+            f"当前可用工具: {', '.join(sorted(registered_tool_names))}"
+        )
     steps = tuple(
-        PlanStep(index, item.tool_name, item.purpose, item.arguments)
+        PlanStep(
+            index,
+            cast(str, resolve_tool_name(item.tool_name, registered_tool_names)),
+            item.purpose,
+            # 计划阶段不产出参数值：参数由执行者在执行该步骤时生成。
+            {},
+        )
         for index, item in enumerate(draft.steps)
     )
-    if not 1 <= len(steps) <= MAX_PLAN_STEPS:
-        raise ValueError("诊断计划必须包含 1 到 8 步")
-    unknown = sorted({step.tool_name for step in steps if step.tool_name not in registered})
-    if unknown:
-        raise ValueError(f"诊断计划引用未注册工具: {', '.join(unknown)}")
     search_steps = [step for step in steps if is_search_log_tool(step.tool_name)]
     if len(search_steps) != 1:
         raise ValueError("诊断计划必须且只能包含一个真实 SearchLog 类步骤")
     search_position = search_steps[0].position
     builders = [step for step in steps if is_query_builder_tool(step.tool_name)]
-    if query_is_trusted and builders:
-        raise ValueError("服务端已有可信 Query，无需重复调用 TextToSearchLogQuery")
-    if not query_is_trusted:
-        if len(builders) != 1 or builders[0].position >= search_position:
-            raise ValueError("未验证 Query 必须先调用一次 TextToSearchLogQuery")
+    if len(builders) != 1 or builders[0].position >= search_position:
+        raise ValueError("要做日志检索，必须先调用一次 TextToSearchLogQuery 生成并验证 CQL")
     contexts = [step for step in steps if is_log_context_tool(step.tool_name)]
     if draft.requires_temporal_context:
         if len(contexts) != 1 or contexts[0].position <= search_position:
@@ -274,12 +373,37 @@ def validate_plan(
     return steps
 
 
+def resolve_tool_name(candidate: str, registered_tool_names: Sequence[str]) -> str | None:
+    """把计划里的工具名解析成本轮真实发现的名称。
+
+    优先精确匹配；否则按语义登记表相同的归一化规则匹配，唯一命中才算解析成功。
+    这样模型写成 `convert_time_string_to_timestamp` 也能被接受，而不是以
+    "引用未注册工具"拒绝。
+    """
+    if candidate in registered_tool_names:
+        return candidate
+    normalized = normalized_tool_name(candidate)
+    matches = [name for name in registered_tool_names if normalized_tool_name(name) == normalized]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def require_plan_step_at(plan: Sequence[PlanStep], position: int) -> PlanStep:
+    """按进度指针取计划步骤，并断言位置字段与数组下标一致。"""
+    step = plan[position]
+    if step.position != position:
+        raise ValueError(
+            f"诊断计划位置与下标不一致: index={position} position={step.position}"
+        )
+    return step
+
+
 async def create_validated_plan(
     model: DiagnosticModel,
     *,
     context: str,
     tool_catalog: Sequence[ToolCapabilityDescriptor],
-    query_is_trusted: bool,
     max_attempts: int = 3,
 ) -> tuple[PlanStep, ...]:
     if max_attempts < 1 or max_attempts > 3:
@@ -293,9 +417,7 @@ async def create_validated_plan(
             validation_errors=tuple(errors),
         )
         try:
-            return validate_plan(
-                draft, registered_names, query_is_trusted=query_is_trusted
-            )
+            return validate_plan(draft, registered_names)
         except ValueError as error:
             errors.append(str(error)[:500])
     raise ValueError(f"Planner 三次校验纠错后仍无有效计划: {errors[-1]}")

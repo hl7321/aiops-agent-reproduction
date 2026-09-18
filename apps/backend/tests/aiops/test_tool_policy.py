@@ -176,8 +176,8 @@ def test_unregistered_read_only_tool_hides_server_provided_fields() -> None:
     assert schema["required"] == ["AlarmNoticeId"]
 
 
-def test_cross_step_locators_are_visible_for_log_context() -> None:
-    """跨步骤产出（Time/PkgId/PkgLogId）不再是服务端注入，必须对模型可见。"""
+def test_bound_cross_step_locators_stay_hidden_from_the_model() -> None:
+    """计划保证的跨步配对由执行者绑定，模型不需要也看不到这些定位字段。"""
     context = _tool_named("DescribeLogContext")
     context.args_schema = {
         "type": "object",
@@ -196,5 +196,5 @@ def test_cross_step_locators_are_visible_for_log_context() -> None:
     schema = registry.catalog[0].input_schema
     properties = schema["properties"]
     assert isinstance(properties, dict)
-    assert set(properties) == {"Time", "PkgId", "PkgLogId"}
-    assert schema["required"] == ["Time", "PkgId", "PkgLogId"]
+    assert properties == {}
+    assert schema["required"] == []

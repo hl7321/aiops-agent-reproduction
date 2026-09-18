@@ -60,7 +60,12 @@ _READ_ONLY_NAME_PREFIXES: tuple[str, ...] = (
 )
 
 
-def _normalized_name(value: str) -> str:
+def normalized_tool_name(value: str) -> str:
+    """工具名归一化：去掉下划线、连字符与空白并转小写。
+
+    计划的工具名校验与语义登记表的匹配 MUST 使用同一套规则，否则会出现
+    "登记表认可但计划校验拒绝"的两套标准。
+    """
     return re.sub(r"[_\-\s]+", "", value.casefold())
 
 
@@ -80,7 +85,7 @@ class AiopsToolPolicyEntry:
     server_provided_arguments: tuple[str, ...] = ()
 
     def matches(self, actual_name: str) -> bool:
-        return _normalized_name(actual_name) == _normalized_name(self.canonical_name)
+        return normalized_tool_name(actual_name) == normalized_tool_name(self.canonical_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,9 +122,9 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
         "log_context",
         True,
         ("log_search",),
-        # Time/PkgId/PkgLogId 来自本轮已验证的 SearchLog 命中：它们不再是"服务端权威值"，
-        # 而是跨步骤产出，由执行者依据前序真实产出填写，因此必须对模型可见。
-        server_provided_arguments=("Region", "TopicId"),
+        # Time/PkgId/PkgLogId 来自本轮已验证的 SearchLog 命中。它们是"搬运"而不是"判断"，
+        # 由执行者在执行时确定性绑定，因此对模型隐藏——模型不该也无法凭空知道这些定位值。
+        server_provided_arguments=("Region", "TopicId", "Time", "PkgId", "PkgLogId"),
     ),
     AiopsToolPolicyEntry(
         "QueryMetric",
