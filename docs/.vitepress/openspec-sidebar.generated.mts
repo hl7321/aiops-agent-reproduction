@@ -11,7 +11,16 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": []
+    "items": [
+      {
+        "text": "handle-missing-log-context-locators",
+        "link": "/changes/active/handle-missing-log-context-locators/"
+      },
+      {
+        "text": "restructure-aiops-plan-execute-replan",
+        "link": "/changes/active/restructure-aiops-plan-execute-replan/"
+      }
+    ]
   },
   {
     "text": "已归档变更",
@@ -135,6 +144,10 @@ export const openspecSidebar = [
       {
         "text": "2026-09-17-fix-aiops-query-artifact-and-tool-errors",
         "link": "/changes/archive/2026-09-17-fix-aiops-query-artifact-and-tool-errors/"
+      },
+      {
+        "text": "2026-09-18-expose-full-aiops-tool-schemas",
+        "link": "/changes/archive/2026-09-18-expose-full-aiops-tool-schemas/"
       }
     ]
   },

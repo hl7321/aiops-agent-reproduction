@@ -2,7 +2,8 @@
 
 ## 进行中的变更
 
-- 无
+- [handle-missing-log-context-locators](./active/handle-missing-log-context-locators/)
+- [restructure-aiops-plan-execute-replan](./active/restructure-aiops-plan-execute-replan/)
 
 ## 已归档变更
 
@@ -36,6 +37,7 @@
 - [2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance](./archive/2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance/)
 - [2026-09-17-fix-aiops-evidence-reference-contract](./archive/2026-09-17-fix-aiops-evidence-reference-contract/)
 - [2026-09-17-fix-aiops-query-artifact-and-tool-errors](./archive/2026-09-17-fix-aiops-query-artifact-and-tool-errors/)
+- [2026-09-18-expose-full-aiops-tool-schemas](./archive/2026-09-18-expose-full-aiops-tool-schemas/)
 
 ## 主规格
 
