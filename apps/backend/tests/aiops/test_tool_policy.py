@@ -4,6 +4,7 @@ from super_ai.aiops.tool_policy import (
     DEFAULT_AIOPS_TOOL_POLICY,
     AiopsToolUnavailableError,
     build_aiops_tool_registry,
+    visible_argument_names,
 )
 
 
@@ -198,3 +199,44 @@ def test_bound_cross_step_locators_stay_hidden_from_the_model() -> None:
     assert isinstance(properties, dict)
     assert properties == {}
     assert schema["required"] == []
+
+
+def test_unsupported_official_fields_are_hidden_and_dropped() -> None:
+    """官方 schema 里存在但当前实现不接受的字段：对模型隐藏，且不进入可见键集合。
+
+    SearchLog 的 `Topics` 与服务端注入的 `TopicId` 表达同一件事；真机上模型填了它，
+    本地输入模型以 extra_forbidden 拒绝了整次调用。
+    """
+    search = _tool_named("SearchLog")
+    search.args_schema = {
+        "type": "object",
+        "properties": {
+            "Region": {"type": "string"},
+            "TopicId": {"type": "string"},
+            "Topics": {"type": "array", "description": "日志主题列表"},
+            "Query": {"type": "string"},
+        },
+        "required": ["Region", "Query"],
+    }
+    builder = _tool_named("TextToSearchLogQuery")
+    builder.args_schema = {
+        "type": "object",
+        "properties": {
+            "Region": {"type": "string"},
+            "Text": {"type": "string"},
+            "SessionId": {"type": "string"},
+        },
+        "required": ["Region", "Text"],
+    }
+
+    registry = build_aiops_tool_registry((search, builder))
+    catalog = {item.name: item for item in registry.catalog}
+
+    search_properties = catalog["SearchLog"].input_schema["properties"]
+    assert isinstance(search_properties, dict)
+    assert "Topics" not in search_properties
+    assert visible_argument_names(catalog["SearchLog"]) == frozenset({"Query"})
+
+    builder_properties = catalog["TextToSearchLogQuery"].input_schema["properties"]
+    assert isinstance(builder_properties, dict)
+    assert "SessionId" not in builder_properties

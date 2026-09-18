@@ -59,6 +59,7 @@ from super_ai.aiops.tool_policy import (
     ToolCapabilityDescriptor,
     build_aiops_tool_registry,
     describe_builtin_knowledge_tool,
+    visible_argument_names,
 )
 from super_ai.api_contracts import (
     ERROR_DEFINITIONS,
@@ -373,7 +374,15 @@ class DiagnosticRuntime:
                         step=plan_step,
                         previous_error=previous_error,
                     )
-                    candidate_arguments = dict(filled.arguments)
+                    # 只接受模型可见说明里出现过的键：服务端注入字段与当前实现不支持的
+                    # 字段（例如 SearchLog 的 Topics）一律丢弃，避免与注入值冲突，
+                    # 也避免本地输入模型因为一个陌生键拒绝整次调用。
+                    visible = visible_argument_names(descriptor)
+                    candidate_arguments = {
+                        key: value
+                        for key, value in filled.arguments.items()
+                        if key in visible
+                    }
                     if is_query_builder_tool(plan_step.tool_name):
                         if self._search_log_defaults is None:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")

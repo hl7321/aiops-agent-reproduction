@@ -73,6 +73,15 @@ def _looks_read_only(tool_name: str) -> bool:
     return tool_name.strip().casefold().startswith(_READ_ONLY_NAME_PREFIXES)
 
 
+def visible_argument_names(descriptor: ToolCapabilityDescriptor) -> frozenset[str]:
+    """模型可见说明里出现过的参数名。
+
+    执行者只接受这些键：服务端注入字段与当前实现不支持的字段都不在其中，
+    模型即使填了也会被丢弃，而不是与注入值打架或让本地输入模型拒绝整次调用。
+    """
+    return frozenset(tool_schema_properties(descriptor.input_schema))
+
+
 @dataclass(frozen=True, slots=True)
 class AiopsToolPolicyEntry:
     canonical_name: str
@@ -83,6 +92,10 @@ class AiopsToolPolicyEntry:
     required_for_profile: bool = False
     # 由服务端注入、因此不进入模型可见参数说明的字段（同时从必填列表移除）。
     server_provided_arguments: tuple[str, ...] = ()
+    # 官方 schema 里存在、但当前实现不接受、因此对模型隐藏并在装配时丢弃的字段。
+    # 例如 SearchLog 的 `Topics`：它与服务端注入的 `TopicId` 表达同一件事，
+    # 交给模型只会让它和注入值打架。
+    unsupported_arguments: tuple[str, ...] = ()
 
     def matches(self, actual_name: str) -> bool:
         return normalized_tool_name(actual_name) == normalized_tool_name(self.canonical_name)
@@ -107,6 +120,8 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
         "query_artifact",
         True,
         server_provided_arguments=("Region", "TopicId"),
+        # SessionId 用于服务端维护生成上下文；当前运行时不需要它。
+        unsupported_arguments=("SessionId",),
     ),
     AiopsToolPolicyEntry(
         "SearchLog",
@@ -115,6 +130,8 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
         True,
         required_for_profile=True,
         server_provided_arguments=("Region", "TopicId"),
+        # Topics 与 TopicId 表达同一件事，而 TopicId 由服务端注入。
+        unsupported_arguments=("Topics",),
     ),
     AiopsToolPolicyEntry(
         "DescribeLogContext",
@@ -185,7 +202,9 @@ def build_aiops_tool_registry(
             entry.artifact_kind if entry is not None else "query_artifact"
         )
         hidden = (
-            SERVER_PROVIDED_ARGUMENTS.union(entry.server_provided_arguments)
+            SERVER_PROVIDED_ARGUMENTS.union(
+                entry.server_provided_arguments, entry.unsupported_arguments
+            )
             if entry is not None
             else SERVER_PROVIDED_ARGUMENTS
         )
