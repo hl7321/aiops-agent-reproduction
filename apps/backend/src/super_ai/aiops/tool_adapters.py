@@ -18,6 +18,7 @@ from super_ai.aiops.cls_tool_adapters import (
     parse_text_to_search_log_query_result,
     unwrap_mcp_payload,
 )
+from super_ai.aiops.tool_policy import AUXILIARY_TOOL_NAMES
 from super_ai.aiops.tool_schema import tool_schema_properties, tool_schema_required
 from super_ai.project_config import JsonValue
 
@@ -99,4 +100,11 @@ def adapt_allowed_tool_output(tool_name: str, result: object) -> AdaptedToolOutp
         payload = unwrap_mcp_payload(result)
         value = MetricResult.model_validate(payload)
         return AdaptedToolOutput("metric", cast(JsonValue, value.model_dump(mode="json")))
+    if tool_name in AUXILIARY_TOOL_NAMES:
+        # 只读辅助工具（时间戳转换、索引查询等）：产物作为中间产物落库，
+        # 让后续步骤与 Replanner 能用上它们的结果；它不参与证据充分性判断。
+        payload = unwrap_mcp_payload(result)
+        if not isinstance(payload, dict):
+            payload = {"value": cast(JsonValue, payload)}
+        return AdaptedToolOutput("query_artifact", cast(JsonValue, payload))
     raise ValueError(f"工具 {tool_name} 输出类型无法安全映射：没有 AIOps adapter")

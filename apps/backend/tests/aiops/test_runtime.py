@@ -38,6 +38,13 @@ from super_ai.memory.sqlite import PersistenceRuntime, transaction_scope, upgrad
 from super_ai.project_config import JsonValue
 from super_ai.tenancy.context import CurrentUser
 
+# 新契约下模型必须自己给出合法的毫秒时间窗：默认值填充与单位换算都已删除，
+# 因此测试替身也要像"看得见完整参数说明的模型"那样把参数填全。
+VALID_TIME_WINDOW: dict[str, int] = {"From": 1_787_479_000_000, "To": 1_787_480_100_000}
+
+# 恢复类用例直接写入历史计划，参数同样要满足新契约（完整键名 + 毫秒时间窗）。
+PLAN_ARGS: dict[str, JsonValue] = {"Query": "error", **VALID_TIME_WINDOW}
+
 
 class FakeKnowledge:
     def __init__(self, order: list[str]) -> None:
@@ -117,7 +124,9 @@ class FakeModel:
         return PlanDraft(
             steps=[
                 PlanStepDraft(
-                    toolName="SearchLog", purpose="查询告警日志", arguments={"query": "error"}
+                    toolName="SearchLog",
+                    purpose="查询告警日志",
+                    arguments={"Query": "error", **VALID_TIME_WINDOW},
                 )
             ]
         )
@@ -168,10 +177,13 @@ class RepairingModel(FakeModel):
         validation_errors: Sequence[str] = (),
     ) -> PlanDraft:
         assert context and tool_catalog and not validation_errors
+        # 首次给出类型错误的 Query：规范化不再静默改写，错误会带着字段路径回到模型。
         return PlanDraft(
             steps=[
                 PlanStepDraft(
-                    toolName="SearchLog", purpose="查询告警日志", arguments={"Query": ""}
+                    toolName="SearchLog",
+                    purpose="查询告警日志",
+                    arguments={"Query": 12_345, **VALID_TIME_WINDOW},
                 )
             ]
         )
@@ -186,7 +198,7 @@ class RepairingModel(FakeModel):
     ) -> ToolArgumentRepairDraft:
         assert context and tool.name == "SearchLog" and "Query" in argument_keys
         self.validation_errors = tuple(validation_errors)
-        return ToolArgumentRepairDraft(arguments={"Query": "error"})
+        return ToolArgumentRepairDraft(arguments={"Query": "error", **VALID_TIME_WINDOW})
 
 
 class EmptyThenCorrelatedResolver(FakeResolver):
@@ -236,7 +248,10 @@ class SpecificSearchModel(FakeModel):
                 PlanStepDraft(
                     toolName="SearchLog",
                     purpose="先尝试精确条件",
-                    arguments={"Query": 'trace_id:"trace-1" AND exception:"short-name"'},
+                    arguments={
+                        "Query": 'trace_id:"trace-1" AND exception:"short-name"',
+                        **VALID_TIME_WINDOW,
+                    },
                 )
             ]
         )
@@ -303,7 +318,7 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
         assert order == ["knowledge", "mcp"]
         assert resolver.arguments == [
             {
-                "From": 1_787_476_500_000,
+                "From": 1_787_479_000_000,
                 "To": 1_787_480_100_000,
                 "Query": "error",
                 "Region": "ap-guangzhou",
@@ -411,7 +426,7 @@ class FailingSearchModel:
                 PlanStepDraft(
                     toolName="SearchLog",
                     purpose="查询告警日志",
-                    arguments={"Query": 'service:"auth-service"'},
+                    arguments={"Query": 'service:"auth-service"', **VALID_TIME_WINDOW},
                 )
             ]
         )
@@ -702,7 +717,7 @@ async def test_restore_ignores_checkpoint_from_previous_plan_version(tmp_path: P
             task = await repository.save_plan(
                 "owner",
                 task.id,
-                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                (PlanStep(0, "SearchLog", "查询真实日志", PLAN_ARGS),),
                 replan_count=0,
             )
             assert task is not None and task.plan_version == 1
@@ -763,7 +778,7 @@ async def test_restore_continues_attempt_sequence_without_reusing_attempt_one(
             task = await repository.save_plan(
                 "owner",
                 task.id,
-                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                (PlanStep(0, "SearchLog", "查询真实日志", PLAN_ARGS),),
                 replan_count=0,
             )
             assert task is not None
@@ -830,7 +845,7 @@ async def test_exhausted_required_search_attempts_persist_failed_explanation(
             task = await repository.save_plan(
                 "owner",
                 task.id,
-                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                (PlanStep(0, "SearchLog", "查询真实日志", PLAN_ARGS),),
                 replan_count=0,
             )
             assert task is not None

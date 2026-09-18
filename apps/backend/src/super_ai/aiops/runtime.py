@@ -380,8 +380,6 @@ class DiagnosticRuntime:
                             proposed,
                             schema=_tool_schema(tool),
                             defaults=self._search_log_defaults,
-                            now_ms=self._now_ms,
-                            fallback_query=_search_log_fallback_query(task.alerts),
                         )
                         invocation_arguments = cast(
                             dict[str, JsonValue],
@@ -791,6 +789,10 @@ def _diagnostic_query(query: str | None, alerts: Sequence[dict[str, JsonValue]])
 def _latest_query_artifact(evidence: Sequence[DiagnosticEvidenceRecord]) -> str | None:
     for item in reversed(evidence):
         if item.kind != "query_artifact":
+            continue
+        # 只读辅助工具的产物同样以 query_artifact 落库；只有 query-builder 的产物
+        # 才是可用的查询，否则辅助结果里若恰好含 Query 字段会被误当成查询。
+        if not is_query_builder_tool(item.source):
             continue
         query = item.metadata.get("Query", item.metadata.get("query"))
         if isinstance(query, str) and query.strip():

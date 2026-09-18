@@ -228,13 +228,16 @@ def build_text_to_search_log_query_input(
     *,
     fallback_prompt: str,
 ) -> TextToSearchLogQueryInput:
+    """装配 query-builder 输入。
+
+    只做服务端权威字段注入。字段名不再做别名兼容：官方 schema 写的是 `Text`，
+    模型照着自己看到的完整说明填即可；填错会以校验错误返回并由纠错路径修正。
+    """
     region = defaults.region.strip()
     topic_id = defaults.topic_id.strip()
     if not region or not topic_id:
         raise ValueError("clsLogUpload region/topicId 配置缺失")
-    prompt = proposed.get(
-        "Text", proposed.get("Prompt", proposed.get("prompt", fallback_prompt))
-    )
+    prompt = proposed.get("Text", fallback_prompt)
     return TextToSearchLogQueryInput.model_validate(
         {"Region": region, "TopicId": topic_id, "Text": prompt}
     )

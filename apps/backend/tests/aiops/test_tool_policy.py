@@ -62,20 +62,92 @@ def test_restored_plan_fails_if_previously_allowed_tool_disappeared() -> None:
         raise AssertionError("恢复时不得调用已经 disabled 或消失的 MCP 工具")
 
 
-def test_catalog_preserves_official_flat_schema_field_names() -> None:
+def test_catalog_hides_server_provided_fields_and_keeps_field_constraints() -> None:
+    """模型可见的参数说明：保留官方字段约束，移除服务端注入的 Region/TopicId。"""
     search = _tool_named("SearchLog")
     search.args_schema = {
-        "From": {"type": "number"},
-        "To": {"type": "number"},
-        "Query": {"type": "string"},
+        "type": "object",
+        "properties": {
+            "From": {"type": "number", "description": "起始时间，毫秒时间戳"},
+            "To": {"type": "number", "description": "结束时间，毫秒时间戳"},
+            "Query": {"type": "string", "description": "检索语句"},
+            "Limit": {"type": "number", "default": 10, "description": "返回条数，1-100"},
+            "TopicId": {"type": "string", "description": "日志主题 ID"},
+            "Region": {"type": "string", "description": "地域，如 ap-guangzhou"},
+        },
+        "required": ["From", "To", "Query", "Region", "TopicId"],
+    }
+    registry = build_aiops_tool_registry((search,))
+    schema = registry.catalog[0].input_schema
+    assert schema["properties"] == {
+        "From": {"type": "number", "description": "起始时间，毫秒时间戳"},
+        "To": {"type": "number", "description": "结束时间，毫秒时间戳"},
+        "Query": {"type": "string", "description": "检索语句"},
+        "Limit": {"type": "number", "default": 10, "description": "返回条数，1-100"},
+    }
+    # 服务端注入的字段同时从必填列表移除，避免出现"必填但看不见"
+    assert schema["required"] == ["From", "To", "Query"]
+
+
+def test_catalog_accepts_official_flat_schema_shape() -> None:
+    """官方扁平 schema（properties 直接铺在顶层）同样要被正确投影。"""
+    search = _tool_named("SearchLog")
+    search.args_schema = {
+        "From": {"type": "number", "description": "起始时间"},
+        "To": {"type": "number", "description": "结束时间"},
+        "Query": {"type": "string", "description": "检索语句"},
         "TopicId": {"type": "string"},
         "Region": {"type": "string"},
     }
     registry = build_aiops_tool_registry((search,))
     assert registry.catalog[0].input_schema["properties"] == {
-        "From": {"type": "number"},
-        "To": {"type": "number"},
-        "Query": {"type": "string"},
-        "TopicId": {"type": "string"},
-        "Region": {"type": "string"},
+        "From": {"type": "number", "description": "起始时间"},
+        "To": {"type": "number", "description": "结束时间"},
+        "Query": {"type": "string", "description": "检索语句"},
     }
+
+
+def test_read_only_auxiliary_tools_enter_policy_and_catalog() -> None:
+    """只读辅助工具（时间戳转换、索引查询）必须能进入 policy 与模型可见目录。"""
+    time_tool = _tool_named("ConvertTimestampToTimeString")
+    time_tool.args_schema = {
+        "type": "object",
+        "properties": {
+            "timestamp": {"type": "number", "description": "不传则返回当前时间"},
+            "unit": {"type": "string", "enum": ["milliseconds", "seconds"]},
+        },
+        "required": [],
+    }
+    index_tool = _tool_named("DescribeIndex")
+    index_tool.args_schema = {
+        "type": "object",
+        "properties": {
+            "Region": {"type": "string"},
+            "TopicId": {"type": "string"},
+        },
+        "required": ["Region", "TopicId"],
+    }
+
+    registry = build_aiops_tool_registry((time_tool, index_tool))
+
+    assert set(registry.tools) == {"ConvertTimestampToTimeString", "DescribeIndex"}
+    catalog = {item.name: item for item in registry.catalog}
+    assert catalog["ConvertTimestampToTimeString"].capability == "auxiliary"
+    assert catalog["ConvertTimestampToTimeString"].artifact_kind == "query_artifact"
+    # 辅助工具不要求出现在诊断 profile 里
+    assert catalog["DescribeIndex"].required_for_profile is False
+
+
+def test_tools_outside_policy_never_enter_catalog() -> None:
+    """未登记的工具（含任何写操作）一律不进入目录，模型无法规划。"""
+    write_tool = _tool_named("DeleteLogTopic")
+    write_tool.args_schema = {
+        "type": "object",
+        "properties": {"Region": {"type": "string"}, "TopicId": {"type": "string"}},
+        "required": ["Region", "TopicId"],
+    }
+
+    registry = build_aiops_tool_registry((write_tool,))
+
+    assert registry.tools == {}
+    assert registry.catalog == ()

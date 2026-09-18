@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -31,10 +31,14 @@ def normalize_search_log_arguments(
     *,
     schema: Mapping[str, object],
     defaults: SearchLogQueryDefaults,
-    now_ms: Callable[[], int],
-    fallback_query: str,
 ) -> dict[str, JsonValue]:
-    """把 Planner 参数收敛到运行时发现的官方 SearchLog JSON Schema。"""
+    """把模型参数收敛到服务端权威范围。
+
+    这里只做两件事：注入服务端权威字段（Region/TopicId），以及按官方 schema 过滤非法键。
+    别名映射、默认时间窗、默认查询、秒级换算与时间窗重置都已删除——它们的作用是替模型
+    猜错买单，让参数错误失去反馈。参数是否合法由官方 schema 校验决定；不合法就直接报错，
+    由纠错路径把完整参数说明和字段错误交回模型修正。
+    """
     region = defaults.region.strip()
     topic_id = defaults.topic_id.strip()
     if not region or not topic_id:
@@ -46,50 +50,6 @@ def normalize_search_log_arguments(
     normalized: dict[str, JsonValue] = {
         key: value for key, value in arguments.items() if key in allowed
     }
-    aliases = {
-        "Query": ("query", "logQuery", "q"),
-        "Region": ("region",),
-        "TopicId": ("topicId", "topic_id"),
-        "Limit": ("limit",),
-        "From": ("from",),
-        "To": ("to",),
-    }
-    for canonical, candidates in aliases.items():
-        if canonical not in allowed or canonical in normalized:
-            continue
-        for candidate in candidates:
-            if candidate in arguments:
-                normalized[canonical] = arguments[candidate]
-                break
-
-    current_ms = now_ms()
-    normalized.setdefault("From", current_ms - 60 * 60 * 1000)
-    normalized.setdefault("To", current_ms)
-    normalized.setdefault("Query", fallback_query[:12_000])
-    for time_key in ("From", "To"):
-        time_value = normalized.get(time_key)
-        if (
-            isinstance(time_value, (int, float))
-            and not isinstance(time_value, bool)
-            and 1_000_000_000 <= time_value < 100_000_000_000
-        ):
-            normalized[time_key] = time_value * 1000
-    from_value = normalized.get("From")
-    to_value = normalized.get("To")
-    if (
-        isinstance(from_value, (int, float))
-        and not isinstance(from_value, bool)
-        and isinstance(to_value, (int, float))
-        and not isinstance(to_value, bool)
-        and (
-            from_value >= to_value
-            or to_value < current_ms - 5 * 60 * 1000
-            or to_value > current_ms + 5 * 60 * 1000
-            or to_value - from_value > 24 * 60 * 60 * 1000
-        )
-    ):
-        normalized["From"] = current_ms - 60 * 60 * 1000
-        normalized["To"] = current_ms
     if "Region" in allowed:
         normalized["Region"] = region
     if "TopicId" in allowed:

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from super_ai.aiops.evidence import alert_evidence, normalize_tool_evidence
+from super_ai.aiops.models import DiagnosticEvidenceRecord
 from super_ai.aiops.planning import (
     PlanDraft,
     PlanStepDraft,
@@ -18,10 +19,32 @@ from super_ai.aiops.planning import (
 )
 from super_ai.aiops.reporting import build_fallback_report, validate_report
 from super_ai.aiops.router import map_job_event_to_sse
+from super_ai.aiops.runtime import _latest_query_artifact  # pyright: ignore[reportPrivateUsage]
+from super_ai.aiops.tool_adapters import adapt_allowed_tool_output
 from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
 from super_ai.api_contracts import ERROR_DEFINITIONS, CreateDiagnosticRequest, TaskStatusData
 from super_ai.app import create_app
 from super_ai.background_jobs.models import BackgroundJobEventRecord
+from super_ai.project_config import JsonValue
+
+
+def _evidence(title: str, source: str, metadata: dict[str, JsonValue]) -> DiagnosticEvidenceRecord:
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    return DiagnosticEvidenceRecord(
+        id=f"evidence-{title}",
+        owner_user_id="owner",
+        diagnostic_task_id="task",
+        diagnostic_step_id=None,
+        tool_call_id=None,
+        kind="query_artifact",
+        source=source,
+        title=title,
+        summary=title,
+        content=title,
+        metadata=metadata,
+        observed_at=None,
+        created_at=now,
+    )
 
 
 def test_contracts_publish_diagnostics_and_shared_status() -> None:
@@ -195,7 +218,11 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
     assert len(never_valid.errors) == 3
 
 
-def test_official_search_log_arguments_use_real_schema_and_deployment_defaults() -> None:
+def test_search_log_arguments_only_inject_server_authoritative_fields() -> None:
+    """规范化只做两件事：注入 Region/TopicId、过滤官方 schema 之外的键。
+
+    模型给出的时间与查询原样保留：不再补默认值、不再改写键名、不再换算单位。
+    """
     schema = {
         "type": "object",
         "properties": {
@@ -212,17 +239,16 @@ def test_official_search_log_arguments_use_real_schema_and_deployment_defaults()
 
     normalized = normalize_search_log_arguments(
         {
-            "logQuery": "trace_id:4a0001",
+            "Query": "trace_id:4a0001",
+            "From": 1_787_476_500_000,
+            "To": 1_787_480_100_000,
+            "Limit": 50,
             "Region": "model-region",
             "TopicId": "model-topic",
-            "timeRange": "2026-08-23T10:00:00Z~2026-08-23T10:15:00Z",
-            "limit": 50,
-            "logset": "payment-service",
+            "logset": "payment-service",   # 官方 schema 之外的键会被过滤
         },
         schema=schema,
         defaults=SearchLogQueryDefaults(region="ap-guangzhou", topic_id="topic-real"),
-        now_ms=lambda: 1_787_480_100_000,
-        fallback_query='incident_id:"java-ecom-001"',
     )
 
     assert normalized == {
@@ -239,37 +265,33 @@ def test_official_search_log_arguments_use_real_schema_and_deployment_defaults()
             {"Query": "*"},
             schema=schema,
             defaults=SearchLogQueryDefaults(region="", topic_id=""),
-            now_ms=lambda: 1_787_480_100_000,
-            fallback_query="*",
         )
 
 
-def test_search_log_arguments_accept_official_flat_field_mapping() -> None:
+def test_search_log_arguments_reject_lowercase_alias_keys() -> None:
+    """别名映射已删除：官方 schema 用 Query，模型写 query 属于缺必填，应当直接失败。"""
     schema = {
-        "From": {"type": "number"},
-        "To": {"type": "number"},
-        "Query": {"type": "string"},
-        "TopicId": {"type": "string"},
-        "Region": {"type": "string"},
-        "Limit": {"type": "number", "default": 10},
+        "type": "object",
+        "properties": {
+            "From": {"type": "number"},
+            "To": {"type": "number"},
+            "Query": {"type": "string"},
+            "TopicId": {"type": "string"},
+            "Region": {"type": "string"},
+            "Limit": {"type": "number", "default": 10},
+        },
+        "required": ["From", "To", "Query", "Region"],
     }
-    normalized = normalize_search_log_arguments(
-        {"query": 'trace_id:"trace-1"'},
-        schema=schema,
-        defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
-        now_ms=lambda: 4_000_000,
-        fallback_query="*",
-    )
-    assert normalized == {
-        "From": 400_000,
-        "To": 4_000_000,
-        "Query": 'trace_id:"trace-1"',
-        "TopicId": "topic-real",
-        "Region": "ap-guangzhou",
-    }
+    with pytest.raises(ValueError, match="缺少必填字段"):
+        normalize_search_log_arguments(
+            {"query": 'trace_id:"trace-1"'},
+            schema=schema,
+            defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+        )
 
 
-def test_search_log_arguments_convert_unix_seconds_to_milliseconds() -> None:
+def test_search_log_arguments_keep_model_time_units_untouched() -> None:
+    """秒级换算已删除：官方 schema 写明单位是毫秒，模型填错应当失败而不是被偷偷换算。"""
     schema = {
         "From": {"type": "number"},
         "To": {"type": "number"},
@@ -280,14 +302,13 @@ def test_search_log_arguments_convert_unix_seconds_to_milliseconds() -> None:
         {"From": 1_787_472_000, "To": 1_787_480_100, "Query": "*"},
         schema=schema,
         defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
-        now_ms=lambda: 1_787_480_100_000,
-        fallback_query="*",
     )
-    assert normalized["From"] == 1_787_472_000_000
-    assert normalized["To"] == 1_787_480_100_000
+    assert normalized["From"] == 1_787_472_000
+    assert normalized["To"] == 1_787_480_100
 
 
-def test_search_log_arguments_reject_stale_model_time_window() -> None:
+def test_search_log_arguments_do_not_reset_stale_time_window() -> None:
+    """时间窗重置已删除：窗口是否合法交由 SearchLogInput 的 from<to 业务校验判定。"""
     schema = {
         "From": {"type": "number"},
         "To": {"type": "number"},
@@ -298,11 +319,36 @@ def test_search_log_arguments_reject_stale_model_time_window() -> None:
         {"From": 1_724_486_988, "To": 1_724_494_188, "Query": "*"},
         schema=schema,
         defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
-        now_ms=lambda: 1_787_480_100_000,
-        fallback_query="*",
     )
-    assert normalized["From"] == 1_787_476_500_000
-    assert normalized["To"] == 1_787_480_100_000
+    assert normalized["From"] == 1_724_486_988
+    assert normalized["To"] == 1_724_494_188
+
+
+def test_auxiliary_tool_output_becomes_intermediate_artifact() -> None:
+    """只读辅助工具的产物以 query_artifact 落库，供后续步骤与 Replanner 使用。"""
+    structured = adapt_allowed_tool_output(
+        "ConvertTimestampToTimeString",
+        {"currentTime": "2026-09-17T12:00:00Z"},
+    )
+    assert structured.kind == "query_artifact"
+    assert structured.payload == {"currentTime": "2026-09-17T12:00:00Z"}
+
+    # 标量返回也要能被安全包起来，而不是直接失败
+    scalar = adapt_allowed_tool_output(
+        "GetRegionCodeByName",
+        [{"type": "text", "text": "ap-guangzhou"}],
+    )
+    assert scalar.kind == "query_artifact"
+    assert scalar.payload == {"value": "ap-guangzhou"}
+
+
+def test_auxiliary_artifact_is_never_used_as_search_query() -> None:
+    """辅助产物即使含 Query 字段，也不能被当成 SearchLog 的查询。"""
+    auxiliary = _evidence("辅助产物", "ConvertTimestampToTimeString", {"Query": "*"})
+    builder = _evidence("查询产物", "TextToSearchLogQuery", {"Query": 'service:"a"'})
+
+    assert _latest_query_artifact((auxiliary, builder)) == 'service:"a"'
+    assert _latest_query_artifact((auxiliary,)) is None
 
 
 def test_evidence_rejects_unknown_payload_and_fallback_is_honest() -> None:

@@ -1,8 +1,5 @@
-# schema-aware-aiops-tool-execution Specification
+## MODIFIED Requirements
 
-## Purpose
-本能力把真实 MCP 动态发现收敛为可验证、可恢复的 AIOps 工具执行边界，使 Planner 只能规划经过能力登记的只读工具，并依据查询来源、结论需要和实际命中条件选择 CLS 能力，而不是把固定工具数量当成可靠性的替代品。
-## Requirements
 ### Requirement: AIOps 工具集合使用双层白名单
 系统 SHALL 保留当前 owner enabled MCP connections 的本轮真实发现结果作为安全白名单，并仅把其中与 AIOps evidence-tool policy 相交的工具交给 Planner。policy MUST 明确工具能力、只读属性、依赖、输入验证器、输出 adapter、产物类型和重试策略；未发现、未登记、具有外部写副作用、缺少输入验证器，或产物无法被安全解释的工具 MUST NOT 进入计划。policy SHALL 区分两类只读工具：**证据型工具**产出诊断证据并参与证据充分性判断；**只读辅助型工具**（例如时间戳转换、日志主题索引查询）允许规划与调用，其产出作为中间产物进入模型可见上下文，但 MUST NOT 计入证据充分性判断。官方 server 已真实发现且通过只读判定的辅助工具 MUST 可以进入计划，不得因为"不产出证据"而一律排除。
 
@@ -82,34 +79,3 @@ Planner SHALL 获得允许工具的完整输入参数说明：字段名、类型
 #### Scenario: 本地默认值缺失
 - **WHEN** 计划需要 SearchLog 或 DescribeLogContext，但 `clsLogUpload.region` 或 `clsLogUpload.topicId` 为空
 - **THEN** 诊断在调用该 CLS 工具前以明确配置错误失败，不让模型猜测或从日志正文反推
-
-### Requirement: 工具纠错与重试有界且可审计
-每个计划步骤 SHALL 最多执行三次 attempt。Pydantic validation 只负责产生结构化字段错误，独立错误策略 MUST 决定 retry、replan 或 permanent failure。可修正输入错误 MAY 将脱敏字段错误和允许 Schema 交给模型修正非权威参数；空结果 MAY 由 Replanner 调整查询；timeout、429 和临时 5xx SHALL 有界退避；配置缺失、401/403、owner 越权、工具未允许、runtime Schema 不兼容和其他永久 4xx MUST NOT 重试。Region、TopicId 以及已验证的跨步参数不得由纠错模型修改。每次 attempt MUST 写入 owner-scoped step、tool audit、持久事件和 checkpoint。失败分类 MUST 在脱敏前提下保留一段有界长度的服务端消息摘要，使失败原因可从 step、tool audit 与持久事件中读出；该摘要 MUST NOT 包含凭据、Region、TopicId 或其他敏感参数值。
-
-#### Scenario: 第二次修正成功
-- **WHEN** 首次参数校验失败，模型依据脱敏错误修正 Query 或可选范围且第二次通过
-- **THEN** 系统记录一次 failed attempt 和一次 succeeded attempt，并只把真实成功输出保存为证据
-
-#### Scenario: 三次仍失败
-- **WHEN** 同一步达到三次上限仍未通过校验或真实调用
-- **THEN** 步骤明确失败，Replanner 只能选择其他已登记真实证据；最终证据仍不足时不得进入可信报告或案例沉淀
-
-#### Scenario: 永久错误不重试
-- **WHEN** 工具失败原因是本地配置缺失、授权拒绝、owner 越权或 Schema 版本不兼容
-- **THEN** 系统只记录一次 failed attempt 并立即进入安全失败处理，不把错误交给模型猜测修复
-
-#### Scenario: 服务端返回可读错误
-- **WHEN** 外部日志服务以执行错误形式返回语法错误、字段不存在或权限不足
-- **THEN** step、tool audit 与持久事件中可见该错误的脱敏摘要，且不出现凭据、Region、TopicId 的具体值
-
-### Requirement: 工具结果按显式证据类型持久化
-系统 SHALL 使用 adapter 声明的产物类型映射结果，至少区分 query artifact、log hit、log context、metric 和 knowledge；不得继续把工具名称的字符串包含关系作为核心证据类型判断。辅助产物只用于确定性组装后续参数，不冒充运行证据。日志、审计和 SSE 只暴露安全摘要、参数键、状态、分类和耗时，不输出凭据、完整参数值或原始 MCP JSON。
-
-#### Scenario: DescribeLogContext 形成上下文证据
-- **WHEN** DescribeLogContext 返回通过校验的前后日志
-- **THEN** 系统保存可追溯的 log-context 证据并关联 SearchLog 命中、step 和 tool call
-
-#### Scenario: 未登记输出类型
-- **WHEN** 一个真实发现工具没有输出 adapter 或安全产物类型
-- **THEN** 它不会进入 Planner，且不能通过通用字符串序列化绕过证据边界
-
