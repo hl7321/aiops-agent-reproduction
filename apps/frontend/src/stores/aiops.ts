@@ -279,6 +279,16 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       selectedCase.value = (await dependencies.client.getCase(id)).data.item;
     }
 
+    /**
+     * 收起当前展开的沉淀案例。
+     *
+     * 案例详情同一时间最多展开一份：选中另一条会替换掉当前这条，
+     * 再点一次同一条或点"收起"则整个详情面板消失。
+     */
+    function closeCase(): void {
+      selectedCase.value = null;
+    }
+
     async function promoteActive(): Promise<void> {
       const task = activeTask.value;
       if (task === null) throw new Error("未选择诊断任务");
@@ -357,7 +367,7 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       lastSequence, activeTask, activeJob, canCancel, timeline,
       initialize, refreshAlerts, refreshHistory, refreshCases, selectDiagnostic,
       createDiagnostic, subscribeActive, resumeStreamIfActive, reconcileActive, cancelActive, selectCase,
-      promoteActive, resolvePromotion,
+      closeCase, promoteActive, resolvePromotion,
       knowledgeDocumentTarget, reset,
     };
   });

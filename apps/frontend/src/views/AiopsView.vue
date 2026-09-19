@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from "vue";
+import { computed, onBeforeUnmount, onMounted } from "vue";
 import { useRouter } from "vue-router";
 
 import type { ActiveAlert } from "@super-ai/api-contracts";
@@ -11,10 +11,20 @@ import AppErrorState from "../components/states/AppErrorState.vue";
 import AppLoadingState from "../components/states/AppLoadingState.vue";
 import { useAiopsStore } from "../stores/aiops";
 import { useFeedbackStore } from "../stores/feedback";
+import { useUserFeedbackStore } from "../stores/userFeedback";
 
 const store = useAiopsStore();
 const feedback = useFeedbackStore();
+const userFeedback = useUserFeedbackStore();
 const router = useRouter();
+
+// 沉淀案例的主观内容来自"来源报告"上的反馈：评分、问题类型、评论、建议纠正。
+// 报告反馈存在 diagnostic_report 这个目标类型下，按 case.reportId 取。
+const selectedCaseFeedback = computed(() => {
+  const item = store.selectedCase;
+  if (item === null) return null;
+  return userFeedback.find("diagnostic_report", item.reportId, null) ?? null;
+});
 
 onMounted(async () => {
   try { await store.initialize(); }
@@ -55,8 +65,18 @@ async function refreshCases(): Promise<void> {
 }
 
 async function selectCase(id: string): Promise<void> {
-  try { await store.selectCase(id); }
-  catch (error: unknown) { feedback.show("error", error instanceof Error ? error.message : "案例读取失败"); }
+  // 再点一次已经展开的案例就是收起：详情同一时间最多展开一份。
+  if (store.selectedCase?.id === id) { store.closeCase(); return; }
+  try {
+    await store.selectCase(id);
+    const reportId = store.selectedCase?.reportId;
+    if (reportId !== undefined) {
+      // 反馈读取失败不该挡住案例详情，静默降级成"这条案例还没有反馈内容"。
+      await userFeedback.load("diagnostic_report", reportId).catch(() => undefined);
+    }
+  } catch (error: unknown) {
+    feedback.show("error", error instanceof Error ? error.message : "案例读取失败");
+  }
 }
 
 async function openDocument(): Promise<void> {
@@ -104,7 +124,9 @@ async function resolvePromotion(
       <AiopsEvidenceCases
         :detail="store.activeDetail" :chain="store.evidenceChain"
         :cases="store.cases" :selected-case="store.selectedCase"
-        @select-case="selectCase" @open-document="openDocument" @refresh-cases="refreshCases"
+        :selected-case-feedback="selectedCaseFeedback"
+        @select-case="selectCase" @close-case="store.closeCase()"
+        @open-document="openDocument" @refresh-cases="refreshCases"
       />
     </main>
   </div>

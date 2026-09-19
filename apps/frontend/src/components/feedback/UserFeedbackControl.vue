@@ -107,7 +107,8 @@ async function deleteFeedback(): Promise<void> {
 
 <template>
   <details class="user-feedback-control">
-    <summary>反馈</summary>
+    <!-- 折起来的时候也要能看出"反馈已经存下来了"，否则点完保存不知道存到哪去了。 -->
+    <summary>反馈{{ existing === null ? "" : existing.rating === "positive" ? " · 已赞同" : " · 已反对" }}</summary>
     <p v-if="loading" role="status">正在恢复反馈</p>
     <form v-else @submit.prevent="submit">
       <div class="feedback-rating" aria-label="回答评价">

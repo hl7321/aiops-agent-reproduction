@@ -186,6 +186,9 @@ describe("AIOps store", () => {
     expect(await store.knowledgeDocumentTarget()).toEqual({
       knowledgeBaseId: "kb-1", documentId: CASE.documentId,
     });
+    // 收起：详情面板的展开状态归零。
+    store.closeCase();
+    expect(store.selectedCase).toBeNull();
   });
 
   it("单个告警 source 失败不阻止历史和案例恢复", async () => {

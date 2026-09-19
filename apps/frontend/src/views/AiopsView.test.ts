@@ -222,6 +222,49 @@ describe("AiopsView", () => {
     });
   });
 
+  it("沉淀案例摊开来源报告的反馈内容，同一时间只展开一份且能收起", async () => {
+    const userFeedback = useUserFeedbackStore();
+    // 反馈保存在"来源报告"这个目标下，案例详情按键名取出来展示。
+    userFeedback.itemsByKey = { "diagnostic_report:report-1:": {
+      id: "feedback-1", targetType: "diagnostic_report", targetId: "report-1", subjectId: null,
+      rating: "positive", reason: "incorrect", comment: "根因里的服务名写错了",
+      correction: "应该是 checkout-service", createdAt: "now", updatedAt: "later",
+    } };
+    const second: DiagnosticCase = {
+      ...CASE, id: "case-2", taskId: "task-2", reportId: "report-2", alertName: "DiskFull",
+    };
+    const { wrapper, store } = await mountView();
+    store.cases = [CASE, second];
+    // 视图会在选中案例后去服务器补一条"来源报告反馈"，这里用桩替代，测试保持离线。
+    userFeedback.load = vi.fn(async () => undefined);
+    await flushPromises();
+
+    // 初始展开 mountView 选中的那一条：反馈的四个字段都在，且有收起入口。
+    expect(wrapper.findAll(".case-detail")).toHaveLength(1);
+    expect(wrapper.text()).toContain("用户反馈");
+    expect(wrapper.text()).toContain("赞同");
+    expect(wrapper.text()).toContain("incorrect");
+    expect(wrapper.text()).toContain("根因里的服务名写错了");
+    expect(wrapper.text()).toContain("应该是 checkout-service");
+    expect(wrapper.find('[data-action="close-case"]').exists()).toBe(true);
+
+    // 换一条：详情跟着走，但始终只有一份。
+    store.selectCase = vi.fn(async (id: string) => {
+      store.selectedCase = id === second.id ? second : CASE;
+    });
+    const rows = wrapper.findAll(".case-row");
+    await rows[1]?.trigger("click");
+    await flushPromises();
+    expect(store.selectedCase?.id).toBe(second.id);
+    expect(wrapper.findAll(".case-detail")).toHaveLength(1);
+
+    // 再点同一条 = 收起，不能"打开就收不起来"。
+    await rows[1]?.trigger("click");
+    await flushPromises();
+    expect(store.selectedCase).toBeNull();
+    expect(wrapper.findAll(".case-detail")).toHaveLength(0);
+  });
+
   it("只有 verified 且正向反馈的报告可显式提升，并展示相似候选决策", async () => {
     const feedback = useUserFeedbackStore();
     feedback.itemsByKey = { "diagnostic_report:report-1:": {
