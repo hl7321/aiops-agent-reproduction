@@ -25,7 +25,8 @@ for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "$p=Get-Conten
 
 if defined CLS_SECRET_ID if defined CLS_SECRET_KEY (
   set "TRANSPORT=http"
-  set "PORT=3000"
+  rem 端口必须是 3001：3000 已被 infra 里的 Attu 占用，配置里的 clsMcpServer.baseUrl 也指向 3001。
+  set "PORT=3001"
   set "TZ=Asia/Shanghai"
   set "TENCENTCLOUD_SECRET_ID=%CLS_SECRET_ID%"
   set "TENCENTCLOUD_SECRET_KEY=%CLS_SECRET_KEY%"

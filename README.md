@@ -57,9 +57,15 @@ scripts\start-local.bat
 - 前端：http://127.0.0.1:5173
 - 后端/OpenAPI：http://127.0.0.1:8000 / http://127.0.0.1:8000/docs
 - 存活/就绪/配置/指标：`/health`、`/ready`、`/config/check`、`/metrics`
-- Attu / Alertmanager：http://127.0.0.1:3001 / http://127.0.0.1:9093
+- Attu / Alertmanager：http://127.0.0.1:3000 / http://127.0.0.1:9093
+- 官方 CLS MCP（主机进程，不是容器）：http://127.0.0.1:3001/mcp —— 端口固定 3001，3000 归 Attu
 
 各平台前置安装见 `docs/setup/`；手动分步启动见 `docs/operations-and-monitoring.md`。
+
+> **开着系统代理的 macOS 用户注意**：ClashX、Surge 之类的代理会把 `127.0.0.1` 的请求也转发出去，
+> 表现为后端日志里连的是代理端口（例如 7890），MCP 一直连不上而 `/ready` 报 `mcp: unavailable`。
+> 启动后端前加一次环境变量即可绕开：`NO_PROXY="127.0.0.1,localhost" no_proxy="127.0.0.1,localhost"`。
+> 官方 CLS MCP 与 Attu 的端口是 3001 / 3000，两者不能互换。
 
 ## 全量验证
 

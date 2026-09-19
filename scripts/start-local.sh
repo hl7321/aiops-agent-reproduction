@@ -51,7 +51,8 @@ process.stdout.write(typeof value === "string" ? value : "");
 CLS_SECRET_ID="$(json_value clsMcpServer.secretId)"
 CLS_SECRET_KEY="$(json_value clsMcpServer.secretKey)"
 if [[ -n "${CLS_SECRET_ID}" && -n "${CLS_SECRET_KEY}" ]]; then
-  TRANSPORT=http PORT=3000 TZ=Asia/Shanghai \
+  # 端口必须是 3001：3000 已被 infra 里的 Attu 占用，配置里的 clsMcpServer.baseUrl 也指向 3001。
+  TRANSPORT=http PORT=3001 TZ=Asia/Shanghai \
     TENCENTCLOUD_SECRET_ID="${CLS_SECRET_ID}" \
     TENCENTCLOUD_SECRET_KEY="${CLS_SECRET_KEY}" \
     nohup npx -y cls-mcp-server@latest >"${VAR_DIR}/cls-mcp-server.log" 2>&1 &
