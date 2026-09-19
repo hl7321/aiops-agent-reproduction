@@ -136,6 +136,15 @@ scripts\start-local.bat
 日志写在 `apps/backend/var`。普通启动不会上传日志、发告警或写入 SOP，这些是单独执行的 fixture，
 顺序见 `docs/tutorials/real-log-and-alert.md`。
 
+要停服务就执行：
+
+```bash
+./scripts/stop-local.sh            # 只停后端、前端、官方 CLS MCP
+./scripts/stop-local.sh --infra    # 连五个容器一起停（数据卷保留）
+```
+
+Windows 在启动脚本那个窗口按 `Ctrl+C`，容器用 `docker compose -f infra/compose.yaml down`。
+
 ### 5. 确认起来了
 
 ```bash

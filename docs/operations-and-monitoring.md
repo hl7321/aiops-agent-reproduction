@@ -21,6 +21,8 @@ npm run frontend:dev -- --host 127.0.0.1
 
 官方 CLS MCP 在另一终端按官方文档以 Streamable HTTP 模式启动，配置 URL 为 `http://127.0.0.1:3001/mcp`。端口固定 3001：Compose 里的 Attu 占用 3000，两者不可互换。凭据只放 ignored JSON；不要放入 URL query。
 
+停止时不需要手写 `kill`：`./scripts/stop-local.sh` 会先按 `apps/backend/var/*.pid` 停，再按 8000 / 5173 / 3001 三个端口兜底（手工启动的服务没有 PID 文件，靠端口找）。加 `--infra` 会额外执行 `docker compose down`，数据卷保留。
+
 停止应用进程不会删除 Compose volumes、SQLite、已下载镜像或 npm/uv 缓存。以后可重新运行启动脚本。`docker compose down` 停容器但保留命名卷；只有用户明确决定清数据时才考虑删除卷。
 
 ## 副作用边界
