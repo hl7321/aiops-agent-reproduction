@@ -16,6 +16,10 @@ createdDate: 2026-09-18
 
 <!--@include: ../../../openspec/changes/handle-missing-log-context-locators/tasks.md-->
 
+## Delta Spec：aiops-diagnosis-and-evidence
+
+<!--@include: ../../../openspec/changes/handle-missing-log-context-locators/specs/aiops-diagnosis-and-evidence/spec.md-->
+
 ## Delta Spec：schema-aware-aiops-tool-execution
 
 <!--@include: ../../../openspec/changes/handle-missing-log-context-locators/specs/schema-aware-aiops-tool-execution/spec.md-->
