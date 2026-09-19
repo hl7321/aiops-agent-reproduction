@@ -13,8 +13,8 @@ export const openspecSidebar = [
     "text": "进行中的变更",
     "items": [
       {
-        "text": "handle-missing-log-context-locators",
-        "link": "/changes/active/handle-missing-log-context-locators/"
+        "text": "simplify-aiops-evidence-gate-and-retire-log-context",
+        "link": "/changes/active/simplify-aiops-evidence-gate-and-retire-log-context/"
       }
     ]
   },

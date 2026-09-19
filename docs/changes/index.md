@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- [handle-missing-log-context-locators](./active/handle-missing-log-context-locators/)
+- [simplify-aiops-evidence-gate-and-retire-log-context](./active/simplify-aiops-evidence-gate-and-retire-log-context/)
 
 ## 已归档变更
 
