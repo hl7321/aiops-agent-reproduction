@@ -1,5 +1,6 @@
 import re
 from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -12,6 +13,7 @@ from super_ai.aiops.models import (
     DiagnosticEvidenceRecord,
     DiagnosticStepRecord,
     DiagnosticStepStatus,
+    DiagnosticTaskRecord,
     PlanStep,
     ToolErrorCategory,
 )
@@ -1056,15 +1058,139 @@ def test_execution_result_carries_real_detail_and_redacts_sensitive_arguments() 
     # 失败类别说明"重试有没有用"
     assert attempts[0]["failureClass"] == "repair"
     assert attempts[0]["errorCategory"] == "input_validation"
-    # 敏感取值以占位符出现
-    assert cast(dict[str, JsonValue], attempts[0]["arguments"])["Region"] == "[redacted]"
-    assert cast(dict[str, JsonValue], attempts[0]["arguments"])["TopicId"] == "[redacted]"
+    # 参数只给键名，不给取值：Region/TopicId 的值不离开后端
+    assert attempts[0]["argumentKeys"] == ["From", "Region", "To", "TopicId"]
+    assert "arguments" not in attempts[0]
     assert "ap-guangzhou" not in str(result)
     assert "topic-real" not in str(result)
     # 产出与来源步骤可追溯
     produced = cast(list[dict[str, JsonValue]], entries[1]["producedEvidence"])
     assert [item["evidenceId"] for item in produced] == ["evidence-1"]
     assert result["evidenceByKind"] == {"log_hit": 1}
+
+
+def test_execution_result_slices_stage_durations_from_real_timestamps() -> None:
+    """阶段耗时按真实时间戳切：受理 / 规划 / 执行 / 报告，缺时间戳的阶段留空不编造。"""
+    created = datetime(2026, 9, 19, 10, 0, 0, tzinfo=timezone.utc)
+    started = created + timedelta(milliseconds=120)
+    first_step = started + timedelta(seconds=3)
+    last_step_done = first_step + timedelta(seconds=7)
+    completed = last_step_done + timedelta(seconds=2)
+
+    def _step(
+        step_id: str, position: int, begun: datetime, ended: datetime
+    ) -> DiagnosticStepRecord:
+        return DiagnosticStepRecord(
+            id=step_id,
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            plan_version=1,
+            position=position,
+            attempt=1,
+            tool_name="SearchLog",
+            arguments={"Query": "checkout"},
+            status="succeeded",
+            result_summary="[log_hit] 命中",
+            error_message=None,
+            started_at=begun,
+            completed_at=ended,
+            created_at=begun,
+            error_category=None,
+        )
+
+    task = DiagnosticTaskRecord(
+        id="task",
+        owner_user_id="owner",
+        status="succeeded",
+        query="排查延迟",
+        alerts=(),
+        current_plan=(
+            PlanStep(0, "TextToSearchLogQuery", "生成检索语句", {}),
+            PlanStep(1, "SearchLog", "查询真实日志", {}),
+        ),
+        plan_version=1,
+        replan_count=0,
+        failure_code=None,
+        failure_reason=None,
+        created_at=created,
+        updated_at=completed,
+        started_at=started,
+        completed_at=completed,
+    )
+    steps = (
+        _step("step-0", 0, first_step, first_step + timedelta(seconds=3)),
+        _step("step-1", 1, first_step + timedelta(seconds=1), last_step_done),
+    )
+
+    result = build_execution_result(task.current_plan, steps, (), task=task)
+
+    stages = cast(list[dict[str, JsonValue]], result["stages"])
+    assert [(item["name"], item["durationMs"]) for item in stages] == [
+        ("受理", 120),
+        ("规划", 3000),
+        ("执行", 7000),
+        ("报告", 2000),
+    ]
+    assert result["durationMs"] == 12120
+    assert result["startedAt"] == "2026-09-19T10:00:00.120000Z"
+    # 步骤级耗时是"首次开始到最后一次结束"，重试等待时间也算在内。
+    entries = cast(list[dict[str, JsonValue]], result["plan"])
+    assert entries[1]["durationMs"] == 6000
+
+
+def test_execution_result_leaves_unfinished_stages_empty() -> None:
+    """任务还在跑：没有完成时间的阶段必须是 null，不能填 0 假装已经结束。"""
+    created = datetime(2026, 9, 19, 10, 0, 0, tzinfo=timezone.utc)
+    started = created + timedelta(milliseconds=100)
+    running = started + timedelta(seconds=2)
+    task = DiagnosticTaskRecord(
+        id="task",
+        owner_user_id="owner",
+        status="running",
+        query=None,
+        alerts=(),
+        current_plan=(PlanStep(0, "SearchLog", "查询真实日志", {}),),
+        plan_version=1,
+        replan_count=0,
+        failure_code=None,
+        failure_reason=None,
+        created_at=created,
+        updated_at=running,
+        started_at=started,
+        completed_at=None,
+    )
+    steps = (
+        DiagnosticStepRecord(
+            id="step-0",
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            plan_version=1,
+            position=0,
+            attempt=1,
+            tool_name="SearchLog",
+            arguments={"Query": "checkout"},
+            status="running",
+            result_summary=None,
+            error_message=None,
+            started_at=running,
+            completed_at=None,
+            created_at=running,
+            error_category=None,
+        ),
+    )
+
+    result = build_execution_result(task.current_plan, steps, (), task=task)
+
+    assert result["durationMs"] is None
+    assert result["completedAt"] is None
+    stages = cast(list[dict[str, JsonValue]], result["stages"])
+    assert [item["durationMs"] for item in stages] == [100, 2000, None, None]
+    entries = cast(list[dict[str, JsonValue]], result["plan"])
+    # 正在跑的步骤：状态 running、完成时间与耗时都是空，前端据此改用本地秒表。
+    assert entries[0]["status"] == "running"
+    assert entries[0]["completedAt"] is None
+    assert entries[0]["durationMs"] is None
+    assert entries[0]["startedAt"] == "2026-09-19T10:00:02.100000Z"
 
 
 class PlanCompletionResolver:

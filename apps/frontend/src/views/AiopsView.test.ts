@@ -52,6 +52,29 @@ const CHAIN: DiagnosticEvidenceChainData = {
   reportEvidenceLinks: [{ id: "l-1", diagnosticTaskId: TASK.id, reportId: "report-1",
     evidenceId: "e-1", claimKey: "root-cause", section: "根因", position: 0 }],
   toolAudits: [],
+  executionResult: {
+    taskId: TASK.id, createdAt: "now", startedAt: "now", completedAt: "later",
+    durationMs: 12_000,
+    stages: [
+      { name: "受理", startedAt: "now", completedAt: "now", durationMs: 200 },
+      { name: "规划", startedAt: "now", completedAt: "now", durationMs: 4_000 },
+      { name: "执行", startedAt: "now", completedAt: "now", durationMs: 6_000 },
+      { name: "报告", startedAt: "now", completedAt: "later", durationMs: 1_800 },
+    ],
+    plan: [{
+      position: 0, toolName: "SearchLog", purpose: "检索 checkout 超时日志",
+      executed: true, status: "succeeded", resultSummary: "[log_hit] 命中 4 条",
+      startedAt: "now", completedAt: "now", durationMs: 6_000,
+      attempts: [{
+        attempt: 1, status: "succeeded", argumentKeys: ["Query", "Region", "TopicId"],
+        failureClass: null, errorCategory: null, errorMessage: null,
+        resultSummary: "[log_hit] 命中 4 条", startedAt: "now", completedAt: "now",
+        durationMs: 6_000,
+      }],
+      producedEvidence: [{ evidenceId: "e-1", kind: "log_context", summary: "发现超时前后序列" }],
+    }],
+    evidenceByKind: { log_context: 1 },
+  },
 };
 const CASE: DiagnosticCase = {
   id: "case-1", ownerUserId: "owner", taskId: TASK.id, reportId: "report-1", documentId: "doc-1",
@@ -102,7 +125,54 @@ describe("AiopsView", () => {
     expect(wrapper.text()).not.toContain("raw-alert-json-must-not-render");
     expect(wrapper.text()).not.toContain("raw-evidence-json");
     expect(wrapper.text()).not.toContain("private-full-log");
-    expect(wrapper.findAll(".feedback-control-stub")).toHaveLength(2);
+    // 步骤级反馈控件已移除（一个 3 步诊断会有 3 个点赞按钮，太噪）；只保留报告级反馈。
+    expect(wrapper.findAll(".feedback-control-stub")).toHaveLength(1);
+    // 执行总账展示一次点击的全过程：阶段耗时 + 逐步对账 + 总耗时。
+    expect(wrapper.text()).toContain("执行总账");
+    expect(wrapper.text()).toContain("总耗时");
+    expect(wrapper.text()).toContain("规划");
+    expect(wrapper.text()).toContain("步骤 1：SearchLog");
+    expect(wrapper.text()).toContain("第 1 次尝试");
+    expect(wrapper.text()).toContain("证据统计");
+  });
+
+  it("运行中的诊断用本地秒表持续显示已进行时长，而不是空白或只在结束后才有数字", async () => {
+    const { wrapper, store } = await mountView();
+    await flushPromises();
+    // 用真实时间戳而不是 "now"：秒表靠 Date.parse 判断，占位字符串解析不出时间会退化成"—"。
+    const startedAt = new Date(Date.now() - 12_000).toISOString();
+    store.evidenceChain = {
+      ...CHAIN,
+      executionResult: {
+        ...CHAIN.executionResult!,
+        startedAt, completedAt: null, durationMs: null,
+        stages: [
+          { name: "受理", startedAt, completedAt: startedAt, durationMs: 200 },
+          { name: "规划", startedAt, completedAt: startedAt, durationMs: 4_000 },
+          { name: "执行", startedAt, completedAt: null, durationMs: null },
+          { name: "报告", startedAt: null, completedAt: null, durationMs: null },
+        ],
+        plan: [{
+          position: 0, toolName: "SearchLog", purpose: "检索 checkout 超时日志",
+          executed: true, status: "running", resultSummary: null,
+          startedAt, completedAt: null, durationMs: null,
+          attempts: [{
+            attempt: 1, status: "running", argumentKeys: ["Query"], failureClass: null,
+            errorCategory: null, errorMessage: null, resultSummary: null,
+            startedAt, completedAt: null, durationMs: null,
+          }],
+          producedEvidence: [],
+        }],
+      },
+    };
+    await flushPromises();
+
+    // 正在跑的是"执行"阶段，而不是时间线里最后那一段还没开始的"报告"。
+    expect(wrapper.text()).toContain("进行中：执行");
+    expect(wrapper.text()).toContain("步骤 1：SearchLog");
+    expect(wrapper.text()).toContain("已进行");
+    expect(wrapper.text()).toContain("总耗时");
+    wrapper.unmount();
   });
 
   it("从真实告警预填，也允许只用 query 创建且不生成 context", async () => {

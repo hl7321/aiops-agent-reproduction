@@ -1,6 +1,8 @@
 import type {
+  AgentToolCallAudit,
   DiagnosticDetailData,
   DiagnosticEvidenceChainData,
+  DiagnosticStep,
   SseEvent,
 } from "@super-ai/api-contracts";
 
@@ -61,36 +63,6 @@ export function buildLiveTimeline(events: readonly SseEvent[]): readonly AiopsTi
           event.timestamp, false, null);
     }
   });
-}
-
-export function buildPersistentExecutionChain(
-  detail: DiagnosticDetailData | null,
-  chain: DiagnosticEvidenceChainData | null,
-): readonly AiopsTimelineItem[] {
-  if (detail === null) return [];
-  const planStatus: AiopsTimelineStatus = detail.task.status === "accepted" ? "pending"
-    : detail.task.status === "running" ? "running"
-      : detail.task.status;
-  const plan = detail.task.currentPlan.map((step) => item(
-    `plan:${detail.task.planVersion}:${step.position}`, "planner", planStatus,
-    `计划 ${step.position + 1}：${step.toolName}`, step.purpose, detail.task.updatedAt,
-    true, null,
-  ));
-  const steps = detail.steps.map((step) => item(
-    `step:${step.id}`, step.toolName.toLowerCase().includes("report") ? "report" : "executor",
-    step.status, `步骤 ${step.position + 1}：${step.toolName}`,
-    `${step.resultSummary ?? step.errorMessage ?? "等待执行"} · 第 ${step.attempt} 次尝试${
-      step.errorCategory === null ? "" : ` · ${step.errorCategory}`
-    }`, step.completedAt ?? step.startedAt,
-    true, step.errorMessage,
-  ));
-  const audits = (chain?.toolAudits ?? []).map((audit) => item(
-    `audit:${audit.id}`, "executor", audit.status === "started" ? "running"
-      : audit.status === "completed" ? "succeeded" : "failed", `审计：${audit.toolName}`,
-    audit.resultSummary ?? audit.errorMessage ?? "工具调用记录", audit.completedAt ?? audit.startedAt,
-    true, audit.errorMessage,
-  ));
-  return [...plan, ...steps, ...audits];
 }
 
 function item(

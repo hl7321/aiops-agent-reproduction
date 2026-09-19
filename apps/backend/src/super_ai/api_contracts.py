@@ -776,11 +776,75 @@ class DiagnosticDetailData(ContractModel):
     report: DiagnosticReport | None
 
 
+class DiagnosticExecutionStage(ContractModel):
+    """一次诊断的阶段耗时（受理 / 规划 / 执行 / 报告）。"""
+
+    name: str
+    started_at: str | None = Field(alias="startedAt")
+    completed_at: str | None = Field(alias="completedAt")
+    duration_ms: int | None = Field(alias="durationMs")
+
+
+class DiagnosticExecutionAttempt(ContractModel):
+    """单次尝试的真实记录；参数只给键名，不给取值。"""
+
+    attempt: int
+    status: DiagnosticStepStatus
+    argument_keys: list[str] = Field(alias="argumentKeys")
+    failure_class: str | None = Field(alias="failureClass")
+    error_category: DiagnosticToolErrorCategory | None = Field(alias="errorCategory")
+    error_message: str | None = Field(alias="errorMessage")
+    result_summary: str | None = Field(alias="resultSummary")
+    started_at: str | None = Field(alias="startedAt")
+    completed_at: str | None = Field(alias="completedAt")
+    duration_ms: int | None = Field(alias="durationMs")
+
+
+class DiagnosticExecutionEvidenceRef(ContractModel):
+    evidence_id: str = Field(alias="evidenceId")
+    kind: DiagnosticEvidenceKind
+    summary: str
+
+
+class DiagnosticExecutionStep(ContractModel):
+    """一条计划步骤的执行对账：计划意图 + 实际尝试 + 真实产出。"""
+
+    position: int
+    tool_name: str = Field(alias="toolName")
+    purpose: str
+    executed: bool
+    status: DiagnosticStepStatus
+    result_summary: str | None = Field(alias="resultSummary")
+    started_at: str | None = Field(alias="startedAt")
+    completed_at: str | None = Field(alias="completedAt")
+    duration_ms: int | None = Field(alias="durationMs")
+    attempts: list[DiagnosticExecutionAttempt]
+    produced_evidence: list[DiagnosticExecutionEvidenceRef] = Field(
+        alias="producedEvidence"
+    )
+
+
+class DiagnosticExecutionResult(ContractModel):
+    """后端组装的完整执行结果：任务级耗时 + 阶段耗时 + 逐步对账 + 证据统计。"""
+
+    task_id: str | None = Field(alias="taskId")
+    created_at: str | None = Field(alias="createdAt")
+    started_at: str | None = Field(alias="startedAt")
+    completed_at: str | None = Field(alias="completedAt")
+    duration_ms: int | None = Field(alias="durationMs")
+    stages: list[DiagnosticExecutionStage]
+    plan: list[DiagnosticExecutionStep]
+    evidence_by_kind: dict[str, int] = Field(alias="evidenceByKind")
+
+
 class DiagnosticEvidenceChainData(ContractModel):
     task_id: str = Field(alias="taskId")
     evidence: list[DiagnosticEvidence]
     report_evidence_links: list[ReportEvidenceLink] = Field(alias="reportEvidenceLinks")
     tool_audits: list[AgentToolCallAudit] = Field(alias="toolAudits")
+    execution_result: DiagnosticExecutionResult | None = Field(
+        default=None, alias="executionResult"
+    )
 
 
 class DiagnosticCase(ContractModel):

@@ -13,7 +13,7 @@ import type {
 
 import { createAiopsClient } from "../aiops/aiopsClient";
 import type { AiopsClient } from "../aiops/aiopsClient";
-import { buildLiveTimeline, buildPersistentExecutionChain } from "../aiops/timeline";
+import { buildLiveTimeline } from "../aiops/timeline";
 import type { AiopsTimelineItem } from "../aiops/timeline";
 import { publicConfig } from "../config";
 import { createApiClient } from "../transport/apiClient";
@@ -22,6 +22,14 @@ import { AUTH_TOKEN_STORAGE_KEY, useAuthStore } from "./auth";
 import { registerProtectedStoreCleanup } from "./protectedStoreRegistry";
 
 const CANCELLABLE_JOB_STATUSES = new Set(["queued", "running"]);
+
+/**
+ * 诊断运行期间"对账数据"的兜底刷新间隔（毫秒）。
+ *
+ * 后端在模型思考和执行长工具时没有事件可发，只靠 SSE 事件驱动的话页面会长时间不动，
+ * 用户以为卡死。这里约定一个偏慢但不会停的节拍，配合事件驱动的即时刷新。
+ */
+const LIVE_REFRESH_INTERVAL_MS = 4_000;
 
 export interface AiopsStoreDependencies {
   readonly client: AiopsClient;
@@ -55,7 +63,6 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
     const canCancel = computed(() => activeJob.value !== null
       && CANCELLABLE_JOB_STATUSES.has(activeJob.value.status));
     const timeline = shallowRef<readonly AiopsTimelineItem[]>([]);
-    const executionChain = shallowRef<readonly AiopsTimelineItem[]>([]);
 
     async function initialize(): Promise<void> {
       const expectedGeneration = generation;
@@ -112,7 +119,6 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       if (expectedGeneration !== generation) return;
       activeDetail.value = detail.data;
       evidenceChain.value = chain.data;
-      executionChain.value = buildPersistentExecutionChain(detail.data, chain.data);
       liveEvents.value = [];
       timeline.value = [];
       lastSequence.value = 0;
@@ -141,9 +147,12 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
           report: null,
         };
         evidenceChain.value = {
-          taskId: created.data.task.id, evidence: [], reportEvidenceLinks: [], toolAudits: [],
+          taskId: created.data.task.id,
+          evidence: [],
+          reportEvidenceLinks: [],
+          toolAudits: [],
+          executionResult: null,
         };
-        executionChain.value = [];
         history.value = [created.data.task, ...history.value.filter((item) => item.id !== created.data.task.id)];
         liveEvents.value = [];
         timeline.value = [];
@@ -166,6 +175,27 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       streamDisconnected.value = false;
       streamError.value = null;
       let sawComplete = false;
+      // 执行总账必须"边走边更新"，而不是等整条流结束才刷一次。这里两条路一起用：
+      // 1) 事件驱动：每来一条工具调用（开始/结束/失败）、节点状态或报告事件，立刻拉一次最新对账数据；
+      // 2) 心跳兜底：模型思考和长工具调用期间后端本来就没有事件可发（30 秒级静默很常见），
+      //    所以再按固定间隔拉一次，保证页面上的耗时和阶段状态一直在往前走。
+      // in-flight 标志避免请求堆叠；不做时间节流，方便测试直接断言调用次数。
+      let refreshInFlight = false;
+      const refreshLiveState = async (): Promise<void> => {
+        if (refreshInFlight) return;
+        refreshInFlight = true;
+        try {
+          const [detail, chain] = await Promise.allSettled([
+            dependencies.client.getDiagnostic(taskId), dependencies.client.getEvidenceChain(taskId),
+          ]);
+          if (expectedGeneration !== generation || expectedStream !== streamGeneration) return;
+          if (detail.status === "fulfilled") activeDetail.value = detail.value.data;
+          if (chain.status === "fulfilled") evidenceChain.value = chain.value.data;
+        } finally {
+          refreshInFlight = false;
+        }
+      };
+      const heartbeat = setInterval(() => { void refreshLiveState(); }, LIVE_REFRESH_INTERVAL_MS);
       try {
         for await (const event of dependencies.client.streamDiagnostic(taskId, lastSequence.value)) {
           if (expectedGeneration !== generation || expectedStream !== streamGeneration) return;
@@ -173,6 +203,12 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
           liveEvents.value = [...liveEvents.value, event];
           timeline.value = buildLiveTimeline(liveEvents.value);
           lastSequence.value = event.sequence;
+          // 工具调用一开始就刷新：后端是先落 running 的步骤记录、再发 started 事件，
+          // 所以此刻拉回来的执行总账里已经有"进行中 + startedAt"，
+          // 前端秒表才能从这一步刚开始就往上走，而不是等它跑完才出现。
+          if (event.type === "tool.call" || event.type === "task.status" || event.type === "report") {
+            void refreshLiveState();
+          }
           if (event.type === "complete") sawComplete = true;
         }
         if (!sawComplete && expectedGeneration === generation && expectedStream === streamGeneration) {
@@ -185,6 +221,9 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
           streamError.value = message(error, "实时流已断开");
         }
       } finally {
+        // 心跳必须无条件停掉：上面的早退分支会跳过 reconcile，
+        // 如果只在同一个 if 里清理就会留下一个永远在轮询的定时器。
+        clearInterval(heartbeat);
         if (expectedGeneration === generation && expectedStream === streamGeneration) {
           streaming.value = false;
           await reconcileActive(taskId, expectedGeneration);
@@ -200,12 +239,24 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       if (expectedGeneration !== generation || activeTask.value?.id !== taskId) return;
       if (detail.status === "fulfilled") activeDetail.value = detail.value.data;
       if (chain.status === "fulfilled") evidenceChain.value = chain.value.data;
-      executionChain.value = buildPersistentExecutionChain(activeDetail.value, evidenceChain.value);
       if (listed.status === "fulfilled") history.value = listed.value.data.items;
       if (caseList.status === "fulfilled") cases.value = caseList.value.data.items;
       if ([detail, chain, listed, caseList].every((result) => result.status === "rejected")) {
         dataError.value = "持久状态恢复失败，请稍后重试";
       }
+    }
+
+    /**
+     * 选中的诊断还在跑、当前又没在订阅时，自动把实时流接回来。
+     *
+     * 场景是"刷新页面之后"：页面重新加载会丢掉上一次的 SSE 连接，
+     * 以前必须让用户手点"手动重新订阅"才会继续更新。这里让它在恢复快照之后自动接回。
+     * 已经结束的任务（succeeded / failed / cancelled）不订阅——不会再有新事件，订阅只会空转。
+     */
+    function resumeStreamIfActive(): void {
+      const job = activeJob.value;
+      if (job === null || !CANCELLABLE_JOB_STATUSES.has(job.status) || streaming.value) return;
+      void subscribeActive();
     }
 
     async function cancelActive(): Promise<void> {
@@ -280,7 +331,6 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       promoting.value = false;
       liveEvents.value = [];
       timeline.value = [];
-      executionChain.value = [];
       loading.value = false;
       creating.value = false;
       streaming.value = false;
@@ -296,9 +346,9 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
       history, activeAlerts, cases, activeDetail, evidenceChain, selectedCase,
       promotionCandidates, promotionError, promoting, liveEvents,
       loading, creating, streaming, streamDisconnected, dataError, alertError, streamError,
-      lastSequence, activeTask, activeJob, canCancel, timeline, executionChain,
+      lastSequence, activeTask, activeJob, canCancel, timeline,
       initialize, refreshAlerts, refreshHistory, refreshCases, selectDiagnostic,
-      createDiagnostic, subscribeActive, reconcileActive, cancelActive, selectCase,
+      createDiagnostic, subscribeActive, resumeStreamIfActive, reconcileActive, cancelActive, selectCase,
       promoteActive, resolvePromotion,
       knowledgeDocumentTarget, reset,
     };

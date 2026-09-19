@@ -5,6 +5,7 @@ import { computed } from "vue";
 import type {
   DiagnosticCasePromotionCandidate,
   DiagnosticDetailData,
+  DiagnosticExecutionResult,
 } from "@super-ai/api-contracts";
 
 import type { AiopsTimelineItem } from "../../aiops/timeline";
@@ -12,9 +13,11 @@ import { diagnosticStatusLabel } from "../../aiops/status";
 import { renderSafeMarkdown } from "../../chat/renderSafeMarkdown";
 import { useUserFeedbackStore } from "../../stores/userFeedback";
 import UserFeedbackControl from "../feedback/UserFeedbackControl.vue";
+import AiopsExecutionLedger from "./AiopsExecutionLedger.vue";
 
 const props = defineProps<{
   detail: DiagnosticDetailData | null;
+  execution: DiagnosticExecutionResult | null;
   timeline: readonly AiopsTimelineItem[];
   streaming: boolean;
   disconnected: boolean;
@@ -100,8 +103,9 @@ function statusLabel(status: string): string {
         </div>
         <div v-else class="blank-report">最终报告将在持久任务成功后显示；失败不会伪装为成功。</div>
       </section>
+      <AiopsExecutionLedger :execution="execution" />
       <section class="timeline-panel">
-        <header><strong>实时 Timeline</strong><span>phase 不是任务状态</span></header>
+        <header><strong>实时事件流</strong></header>
         <div v-if="timeline.length" class="timeline-scroll" aria-label="实时诊断 timeline">
           <article v-for="entry in timeline" :key="entry.key" class="timeline-item" :data-status="entry.status">
             <div><span>{{ phaseLabel(entry.phase) }}</span><strong>{{ entry.title }}</strong><time v-if="entry.timestamp">{{ entry.timestamp }}</time></div>

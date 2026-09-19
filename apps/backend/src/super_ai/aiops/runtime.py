@@ -21,6 +21,7 @@ from super_ai.aiops.cls_tool_adapters import (
 )
 from super_ai.aiops.evidence import knowledge_evidence, normalize_tool_evidence
 from super_ai.aiops.evidence_policy import evaluate_claim_evidence
+from super_ai.aiops.execution_result import build_execution_result
 from super_ai.aiops.models import (
     DiagnosticEvidenceRecord,
     DiagnosticReportRecord,
@@ -48,13 +49,11 @@ from super_ai.aiops.tool_adapters import (
     validate_tool_arguments,
 )
 from super_ai.aiops.tool_failures import (
-    SENSITIVE_ARGUMENT_KEYS,
     ToolConfigurationError,
     ToolEmptyResultError,
     ToolOutputValidationError,
     ToolSchemaIncompatibleError,
     classify_tool_failure,
-    failure_class_of,
 )
 from super_ai.aiops.tool_policy import (
     ToolCapabilityDescriptor,
@@ -992,81 +991,6 @@ def _step_argument_context(
         f"告警原文：{list(alerts)}\n"
         f"前面步骤的真实产出：\n{outputs or '（还没有任何产出）'}"
     )
-
-
-def _redacted_arguments(arguments: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
-    """把服务端权威字段的取值换成占位符，避免进入执行结果与下钻视图。"""
-    return {
-        key: "[redacted]"
-        if str(key).strip().casefold().replace("-", "_") in SENSITIVE_ARGUMENT_KEYS
-        else value
-        for key, value in arguments.items()
-    }
-
-
-def build_execution_result(
-    plan: Sequence[PlanStep],
-    steps: Sequence[DiagnosticStepRecord],
-    evidence: Sequence[DiagnosticEvidenceRecord],
-) -> dict[str, JsonValue]:
-    """把一轮真实执行整理成结构化执行结果。
-
-    由代码依据 step 与 evidence 记录组装，不由模型撰写——它的用途是让 Replanner
-    判断"继续还是出报告"，以及让报告节点说明哪些步骤没完成，都需要真实细节而不是
-    模型对自己工作的复述。Region/TopicId 等敏感取值以占位符出现。
-    """
-    attempts_by_position: dict[int, list[DiagnosticStepRecord]] = {}
-    for item in steps:
-        attempts_by_position.setdefault(item.position, []).append(item)
-    evidence_by_step: dict[str, list[DiagnosticEvidenceRecord]] = {}
-    for item in evidence:
-        if item.diagnostic_step_id:
-            evidence_by_step.setdefault(item.diagnostic_step_id, []).append(item)
-
-    entries: list[JsonValue] = []
-    for step in plan:
-        attempts = sorted(
-            attempts_by_position.get(step.position, []), key=lambda item: item.attempt
-        )
-        last = attempts[-1] if attempts else None
-        entries.append(
-            {
-                "position": step.position,
-                "toolName": step.tool_name,
-                "purpose": step.purpose,
-                "executed": bool(attempts),
-                "status": last.status if last is not None else "pending",
-                "resultSummary": last.result_summary if last is not None else None,
-                "attempts": [
-                    {
-                        "attempt": item.attempt,
-                        "status": item.status,
-                        "arguments": _redacted_arguments(item.arguments),
-                        "failureClass": failure_class_of(item.error_category),
-                        "errorCategory": item.error_category,
-                        "errorMessage": item.error_message,
-                    }
-                    for item in attempts
-                ],
-                "producedEvidence": [
-                    {
-                        "evidenceId": item.id,
-                        "kind": item.kind,
-                        "summary": item.summary[:600],
-                    }
-                    for attempt in attempts
-                    for item in evidence_by_step.get(attempt.id, [])
-                ],
-            }
-        )
-
-    evidence_by_kind: dict[str, int] = {}
-    for item in evidence:
-        evidence_by_kind[item.kind] = evidence_by_kind.get(item.kind, 0) + 1
-    return {
-        "plan": entries,
-        "evidenceByKind": cast(JsonValue, evidence_by_kind),
-    }
 
 
 def _evidence_reference(record: DiagnosticEvidenceRecord) -> dict[str, object]:
