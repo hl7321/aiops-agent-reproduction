@@ -10,6 +10,7 @@ from super_ai.aiops.planning import (
     REPORT_SYSTEM_PROMPT,
     PlanDraft,
     PlanStepDraft,
+    ReplanDraft,
     ReportDraft,
     SearchLogQueryDefaults,
     StepArgumentsDraft,
@@ -155,31 +156,37 @@ def test_tool_name_matching_is_loose_and_resolves_to_real_names() -> None:
     assert [step.tool_name for step in steps] == ["TextToSearchLogQuery", "SearchLog"]
 
 
-def test_temporal_claim_requires_context_after_search() -> None:
-    missing = PlanDraft(
-        requiresTemporalContext=True,
-        steps=[
-            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
-            PlanStepDraft(toolName="SearchLog", purpose="查询日志"),
-        ],
+def test_plan_no_longer_carries_a_temporal_flag() -> None:
+    """时序概念已退役：计划输出里不再有 requiresTemporalContext。"""
+    assert "requiresTemporalContext" not in PlanDraft.model_json_schema(by_alias=True).get(
+        "properties", {}
     )
-    with pytest.raises(ValueError, match="DescribeLogContext"):
-        validate_plan(missing, ("TextToSearchLogQuery", "SearchLog", "DescribeLogContext"))
+    assert "requiresTemporalContext" not in ReplanDraft.model_json_schema(by_alias=True).get(
+        "properties", {}
+    )
 
-    valid = PlanDraft(
-        requiresTemporalContext=True,
+
+def test_plan_without_context_step_is_valid_and_retired_tool_is_rejected() -> None:
+    """需要前后过程的计划不再强制上下文步骤；已被退役的工具仍然不可规划。"""
+    plain = PlanDraft(
         steps=[
             PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
             PlanStepDraft(toolName="SearchLog", purpose="查询日志"),
-            PlanStepDraft(toolName="DescribeLogContext", purpose="验证调用时序"),
-        ],
+        ]
     )
     assert [
-        step.tool_name
-        for step in validate_plan(
-            valid, ("TextToSearchLogQuery", "SearchLog", "DescribeLogContext")
-        )
-    ] == ["TextToSearchLogQuery", "SearchLog", "DescribeLogContext"]
+        step.tool_name for step in validate_plan(plain, ("TextToSearchLogQuery", "SearchLog"))
+    ] == ["TextToSearchLogQuery", "SearchLog"]
+
+    with_retired_tool = PlanDraft(
+        steps=[
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询日志"),
+            PlanStepDraft(toolName="DescribeLogContext", purpose="查前后日志"),
+        ]
+    )
+    with pytest.raises(ValueError, match="未发现的工具"):
+        validate_plan(with_retired_tool, ("TextToSearchLogQuery", "SearchLog"))
 
 
 async def test_planner_validation_correction_is_bounded_to_three_attempts() -> None:

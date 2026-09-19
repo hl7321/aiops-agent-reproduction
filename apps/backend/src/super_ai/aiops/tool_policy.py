@@ -96,6 +96,10 @@ class AiopsToolPolicyEntry:
     # 例如 SearchLog 的 `Topics`：它与服务端注入的 `TopicId` 表达同一件事，
     # 交给模型只会让它和注入值打架。
     unsupported_arguments: tuple[str, ...] = ()
+    # 数据源不满足该工具前置条件时的退役依据。非 None 表示它在本数据源退役：
+    # 不进入 registry、不出现在模型可见目录、不可被规划或调用。
+    # 这与"未登记语义"不同——后者仍可执行，只是产物按中间产物处理。
+    unavailable_reason: str | None = None
 
     def matches(self, actual_name: str) -> bool:
         return normalized_tool_name(actual_name) == normalized_tool_name(self.canonical_name)
@@ -142,6 +146,10 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
         # Time/PkgId/PkgLogId 来自本轮已验证的 SearchLog 命中。它们是"搬运"而不是"判断"，
         # 由执行者在执行时确定性绑定，因此对模型隐藏——模型不该也无法凭空知道这些定位值。
         server_provided_arguments=("Region", "TopicId", "Time", "PkgId", "PkgLogId"),
+        # 退役：必填的 PkgId 只能来自 SearchLog 命中，而当前上传链路（PutLogs API）
+        # 无论上传什么内容都产不出上报包 ID——SearchLog 返回的是空串。实测把伪造值
+        # 注入进去，服务端不报错但返回空上下文。顺序信息由检索结果自身携带，无需该工具。
+        unavailable_reason="当前日志上传链路产不出上报包 ID（PkgId/PkgLogId 恒为空）",
     ),
     AiopsToolPolicyEntry(
         "QueryMetric",
@@ -149,6 +157,18 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
         "metric",
         True,
         server_provided_arguments=("Region", "TopicId"),
+        # 退役：该工具要求 TopicId 是「指标主题」（BizType=1），而当前账号只有 1 个
+        # 日志主题、0 个指标主题。实测报 `the topic is not metric topic`。
+        unavailable_reason="当前账号没有指标主题（日志主题 1 个、指标主题 0 个）",
+    ),
+    AiopsToolPolicyEntry(
+        "QueryRangeMetric",
+        "metric_query",
+        "metric",
+        True,
+        server_provided_arguments=("Region", "TopicId"),
+        # 同 QueryMetric：需要指标主题，当前账号没有。
+        unavailable_reason="当前账号没有指标主题（日志主题 1 个、指标主题 0 个）",
     ),
     # 官方 server 的这 20 个工具全部是只读查询类；下面登记的是诊断过程中真正
     # 需要配套使用的辅助工具（尤其是官方 SearchLog 说明里要求先调用的时间转换）。
@@ -192,6 +212,9 @@ def build_aiops_tool_registry(
     descriptors: list[ToolCapabilityDescriptor] = []
     for tool in discovered:
         entry = next((item for item in policy if item.matches(tool.name)), None)
+        if entry is not None and entry.unavailable_reason is not None:
+            # 数据源满足不了它的前置条件：不进入 registry，也不出现在模型可见目录。
+            continue
         read_only = entry.read_only if entry is not None else _looks_read_only(tool.name)
         if not read_only:
             continue

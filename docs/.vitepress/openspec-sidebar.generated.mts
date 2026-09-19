@@ -11,12 +11,7 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": [
-      {
-        "text": "simplify-aiops-evidence-gate-and-retire-log-context",
-        "link": "/changes/active/simplify-aiops-evidence-gate-and-retire-log-context/"
-      }
-    ]
+    "items": []
   },
   {
     "text": "已归档变更",
@@ -152,6 +147,10 @@ export const openspecSidebar = [
       {
         "text": "2026-09-19-fix-aiops-plan-completion-and-report-trust",
         "link": "/changes/archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/"
+      },
+      {
+        "text": "2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context",
+        "link": "/changes/archive/2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context/"
       }
     ]
   },

@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- [simplify-aiops-evidence-gate-and-retire-log-context](./active/simplify-aiops-evidence-gate-and-retire-log-context/)
+- 无
 
 ## 已归档变更
 
@@ -39,6 +39,7 @@
 - [2026-09-18-expose-full-aiops-tool-schemas](./archive/2026-09-18-expose-full-aiops-tool-schemas/)
 - [2026-09-18-restructure-aiops-plan-execute-replan](./archive/2026-09-18-restructure-aiops-plan-execute-replan/)
 - [2026-09-19-fix-aiops-plan-completion-and-report-trust](./archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/)
+- [2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context](./archive/2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context/)
 
 ## 主规格
 

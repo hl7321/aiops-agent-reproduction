@@ -94,14 +94,6 @@ class PlanDraft(BaseModel):
         max_length=MAX_PLAN_STEPS,
         description="按执行顺序排列的步骤清单。每一步只说明用哪个工具、为什么用，不含参数值。",
     )
-    requires_temporal_context: bool = Field(
-        default=False,
-        alias="requiresTemporalContext",
-        description=(
-            "这份计划是否需要事件前后顺序的证据。"
-            "只有结论依赖调用顺序、重试、熔断或恢复时才填 true。"
-        ),
-    )
 
 
 class StepArgumentsDraft(BaseModel):
@@ -124,7 +116,6 @@ class ReplanDraft(BaseModel):
     action: DiagnosticReplanAction
     steps: list[PlanStepDraft] = Field(default_factory=_empty_plan_steps)
     reason: str = Field(min_length=1, max_length=500)
-    requires_temporal_context: bool = Field(default=False, alias="requiresTemporalContext")
 
 
 class ReportClaimDraft(BaseModel):
@@ -304,12 +295,14 @@ class QwenDiagnosticModel:
                         "5. 每一步写一句用途，说清要拿到什么信息、给后面哪一步用。\n"
                         "6. 不要填任何工具参数。参数由执行者在那一步真正执行时填，"
                         "你现在写的值一定是凭空猜的，所以不要写。\n"
-                        "7. 硬性约束（必须满足，否则计划会被打回重做）：\n"
+                        "7. 关于「前后过程」：这个日志平台的检索结果自带链路顺序——同一条故障"
+                        "链路上的日志会按发生顺序一起返回。所以当结论需要证明「先发生什么、"
+                        "后发生什么」时，直接依据检索回来的日志即可，不需要、也没有专门查询"
+                        "日志上下文的工具。\n"
+                        "8. 硬性约束（必须满足，否则计划会被打回重做）：\n"
                         "   - 步骤数在 1 到 8 之间；\n"
                         "   - 必须且只能有一个日志检索步骤；\n"
                         "   - 要做日志检索，就必须在它前面放一个生成查询的步骤；\n"
-                        "   - 只有结论依赖调用顺序、重试、熔断或恢复这类时序判断时，"
-                        "才在日志检索之后加一个查日志上下文的步骤；\n"
                         "   - 不要为了凑步骤而加工具。\n\n"
                         "【输出结果】\n"
                         "steps：按执行顺序排列的步骤清单，每一步包含：\n"
@@ -317,7 +310,6 @@ class QwenDiagnosticModel:
                         "  - purpose：这一步要拿到什么信息、给后面哪一步用，一句话说清；\n"
                         "    合格示例：「查 order-service 的日志主题 ID，供第 3 步使用」；\n"
                         "    不合格示例：「查一下主题」。\n"
-                        "requiresTemporalContext：这份计划是否需要事件前后顺序的证据。\n"
                         "交出去之前自己检查一遍：步骤数在 1 到 8 之间吗？每个 toolName 都能"
                         "在清单里原样找到吗？有且只有一个日志检索步骤吗？它前面有生成查询的"
                         "步骤吗？每一步的 purpose 都写清了给谁用吗？"
@@ -395,12 +387,8 @@ def validate_plan(
     builders = [step for step in steps if is_query_builder_tool(step.tool_name)]
     if len(builders) != 1 or builders[0].position >= search_position:
         raise ValueError("要做日志检索，必须先调用一次 TextToSearchLogQuery 生成并验证 CQL")
-    contexts = [step for step in steps if is_log_context_tool(step.tool_name)]
-    if draft.requires_temporal_context:
-        if len(contexts) != 1 or contexts[0].position <= search_position:
-            raise ValueError("时序结论必须在 SearchLog 后调用一次 DescribeLogContext")
-    elif contexts:
-        raise ValueError("非时序计划不得为凑步骤调用 DescribeLogContext")
+    # 时序校验规则已随"时序"概念一起退役：日志上下文工具在当前数据源不可用，
+    # 顺序信息由检索结果自身携带，因此不再强制也不禁止某类上下文步骤。
     return steps
 
 

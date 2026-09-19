@@ -1068,7 +1068,7 @@ def test_execution_result_carries_real_detail_and_redacts_sensitive_arguments() 
 
 
 class PlanCompletionResolver:
-    """提供生成查询、永远查不到日志的 SearchLog、以及可成功的 QueryMetric。"""
+    """提供生成查询、永远查不到日志的 SearchLog、以及可成功的只读辅助工具。"""
 
     def __init__(self) -> None:
         self.order: list[str] = []
@@ -1086,13 +1086,13 @@ class PlanCompletionResolver:
             self.order.append("search")
             return {"structuredContent": []}
 
-        @tool("QueryMetric")
-        async def query_metric(Query: str, Region: str, TopicId: str = "") -> object:
-            """查询指标趋势。"""
-            self.order.append("metric")
-            return {"structuredContent": {"series": [{"timestamp": 1, "value": 2}]}}
+        @tool("DescribeLogHistogram")
+        async def describe_log_histogram(Query: str) -> object:
+            """查询日志量分布。"""
+            self.order.append("histogram")
+            return {"structuredContent": {"TotalCount": 3}}
 
-        return (_fake_query_builder_tool(), search_log, query_metric)
+        return (_fake_query_builder_tool(), search_log, describe_log_histogram)
 
 
 class PlanCompletionModel(FakeModel):
@@ -1108,7 +1108,7 @@ class PlanCompletionModel(FakeModel):
             steps=[
                 _query_builder_step(),
                 _search_step("查询告警日志"),
-                PlanStepDraft(toolName="QueryMetric", purpose="查询指标趋势"),
+                PlanStepDraft(toolName="DescribeLogHistogram", purpose="查看日志量分布"),
             ]
         )
 
@@ -1124,8 +1124,8 @@ class PlanCompletionModel(FakeModel):
         assert context and plan and tool.name == step.tool_name
         if tool.name == "TextToSearchLogQuery":
             return StepArgumentsDraft(arguments={"Text": "查询告警日志"})
-        if tool.name == "QueryMetric":
-            return StepArgumentsDraft(arguments={"Query": "up"})
+        if tool.name == "DescribeLogHistogram":
+            return StepArgumentsDraft(arguments={"Query": "*"})
         return StepArgumentsDraft(arguments=dict(VALID_TIME_WINDOW))
 
 
@@ -1177,7 +1177,7 @@ async def test_failed_step_does_not_stop_the_remaining_plan(tmp_path: Path) -> N
             (1, "failed"),
             (2, "succeeded"),
         ]
-        assert resolver.order == ["search", "metric"]
+        assert resolver.order == ["search", "histogram"]
     finally:
         await runtime.close()
 
@@ -1288,8 +1288,9 @@ class VerifiedEvidenceModel(FakeModel):
                 ReportClaimDraft(
                     claimKey="root-cause",
                     section="根因结论",
-                    # 报告需要链接全部支撑证据，否则会被判为证据未全部利用而标记不确定。
-                    evidenceIds=ids,
+                    # 只引用其中一条：报告不要求穷尽引用每一条支撑证据，
+                    # 因此不应因此被判为不确定（此前那条更严的检查已删除）。
+                    evidenceIds=[ids[0]],
                     uncertain=False,
                 )
             ],
@@ -1298,7 +1299,11 @@ class VerifiedEvidenceModel(FakeModel):
 
 
 async def test_verified_evidence_marks_task_succeeded(tmp_path: Path) -> None:
-    """证据充分且报告通过结构校验时，任务才标记 succeeded。"""
+    """证据充分且报告通过结构校验时，任务才标记 succeeded。
+
+    报告只引用了部分支撑证据（一条），这不应影响可信状态——规格只要求"每个关键结论
+    建立真实链接"，没有要求穷尽引用每一条证据。
+    """
     url = f"sqlite+aiosqlite:///{tmp_path / 'verified.sqlite3'}"
     await upgrade_database(url)
     runtime = PersistenceRuntime.start(DatabaseSettings(url=url))

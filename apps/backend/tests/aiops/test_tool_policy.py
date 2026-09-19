@@ -20,18 +20,20 @@ def _tool_named(name: str):
 def test_registry_takes_every_discovered_read_only_tool() -> None:
     """工具集合来自真实发现：已登记的保留语义，未登记的只读工具同样可被规划。"""
     search = _tool_named("SearchLog")
-    metric = _tool_named("QueryMetric")
+    histogram = _tool_named("DescribeLogHistogram")
     listing = _tool_named("DescribeTopics")
     write_alert = _tool_named("CreateAlert")
     registry = build_aiops_tool_registry(
-        (search, metric, listing, write_alert), policy=DEFAULT_AIOPS_TOOL_POLICY
+        (search, histogram, listing, write_alert), policy=DEFAULT_AIOPS_TOOL_POLICY
     )
 
-    assert tuple(registry.tools) == ("SearchLog", "QueryMetric", "DescribeTopics")
+    assert tuple(registry.tools) == ("SearchLog", "DescribeLogHistogram", "DescribeTopics")
     assert all(item.read_only for item in registry.catalog)
     catalog = {item.name: item for item in registry.catalog}
     assert catalog["SearchLog"].capability == "log_search"
-    # 未登记的工具按只读辅助工具处理，产物落中间产物
+    # 未登记的只读工具按辅助工具处理，产物落中间产物
+    assert catalog["DescribeLogHistogram"].capability == "auxiliary"
+    assert catalog["DescribeLogHistogram"].artifact_kind == "query_artifact"
     assert catalog["DescribeTopics"].capability == "auxiliary"
     assert catalog["DescribeTopics"].artifact_kind == "query_artifact"
     assert "CreateAlert" not in registry.tools
@@ -54,15 +56,15 @@ def test_unknown_or_side_effect_tool_is_not_executable() -> None:
 
 def test_restored_plan_fails_if_previously_allowed_tool_disappeared() -> None:
     original = build_aiops_tool_registry(
-        (_tool_named("SearchLog"), _tool_named("DescribeLogContext")),
+        (_tool_named("SearchLog"), _tool_named("DescribeTopics")),
         policy=DEFAULT_AIOPS_TOOL_POLICY,
     )
     restored = build_aiops_tool_registry(
         (_tool_named("SearchLog"),), policy=DEFAULT_AIOPS_TOOL_POLICY
     )
-    assert original.require("DescribeLogContext").name == "DescribeLogContext"
+    assert original.require("DescribeTopics").name == "DescribeTopics"
     try:
-        restored.require("DescribeLogContext")
+        restored.require("DescribeTopics")
     except AiopsToolUnavailableError:
         pass
     else:
@@ -177,28 +179,30 @@ def test_unregistered_read_only_tool_hides_server_provided_fields() -> None:
     assert schema["required"] == ["AlarmNoticeId"]
 
 
-def test_bound_cross_step_locators_stay_hidden_from_the_model() -> None:
-    """计划保证的跨步配对由执行者绑定，模型不需要也看不到这些定位字段。"""
-    context = _tool_named("DescribeLogContext")
-    context.args_schema = {
-        "type": "object",
-        "properties": {
-            "Region": {"type": "string"},
-            "TopicId": {"type": "string"},
-            "Time": {"type": "number", "description": "命中时间"},
-            "PkgId": {"type": "string", "description": "日志包 ID"},
-            "PkgLogId": {"type": "number", "description": "包内序号"},
-        },
-        "required": ["Region", "TopicId", "Time", "PkgId", "PkgLogId"],
-    }
+def test_tools_unavailable_for_the_data_source_are_retired() -> None:
+    """数据源满足不了前置条件的工具必须在当前数据源退役。
 
-    registry = build_aiops_tool_registry((context,))
+    退役与"未登记语义"不同：退役工具不进 registry、不出现在模型可见目录，
+    也不可被调用；而未登记的只读工具仍可执行，只是产物按中间产物处理。
+    """
+    discovered = (
+        _tool_named("SearchLog"),
+        _tool_named("DescribeLogContext"),
+        _tool_named("QueryMetric"),
+        _tool_named("QueryRangeMetric"),
+        _tool_named("DescribeTopics"),
+    )
 
-    schema = registry.catalog[0].input_schema
-    properties = schema["properties"]
-    assert isinstance(properties, dict)
-    assert properties == {}
-    assert schema["required"] == []
+    registry = build_aiops_tool_registry(discovered, policy=DEFAULT_AIOPS_TOOL_POLICY)
+
+    assert tuple(registry.tools) == ("SearchLog", "DescribeTopics")
+    for retired in ("DescribeLogContext", "QueryMetric", "QueryRangeMetric"):
+        try:
+            registry.require(retired)
+        except AiopsToolUnavailableError:
+            pass
+        else:
+            raise AssertionError(f"退役工具不得进入 registry: {retired}")
 
 
 def test_unsupported_official_fields_are_hidden_and_dropped() -> None:

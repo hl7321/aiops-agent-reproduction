@@ -426,6 +426,9 @@ class DiagnosticRuntime:
                             ),
                         )
                     elif is_log_context_tool(plan_step.tool_name):
+                        # 当前数据源已退役日志上下文工具（必填的上报包 ID 拿不到），因此
+                        # 这个分支不可达。保留装配逻辑是为了将来数据源变化、该工具重新
+                        # 可用时能直接启用——与 replanner 保留换计划代码路径同一原则。
                         if self._search_log_defaults is None:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")
                         hit = _latest_log_hit(evidence)
@@ -625,9 +628,6 @@ class DiagnosticRuntime:
             evaluation = evaluate_claim_evidence(
                 evidence=tuple(evidence),
                 steps=tuple(steps),
-                requires_temporal_context=any(
-                    is_log_context_tool(item.tool_name) for item in task.current_plan
-                ),
             )
             # 路由只看进度与证据：executor 在步骤失败后同样推进进度指针，
             # 因此"指针继续前进"本身就是有界性保证，不再需要看失败标记。
@@ -668,9 +668,6 @@ class DiagnosticRuntime:
             evaluation = evaluate_claim_evidence(
                 evidence=tuple(evidence),
                 steps=tuple(steps),
-                requires_temporal_context=any(
-                    is_log_context_tool(item.tool_name) for item in task.current_plan
-                ),
             )
             mode = "model"
             uncertainty = False
@@ -684,11 +681,11 @@ class DiagnosticRuntime:
                 markdown, claims, uncertainty = validate_report(
                     draft, evidence, alert_count=len(task.alerts)
                 )
-                linked_ids = {
-                    evidence_id for claim in claims for evidence_id in claim.evidence_ids
-                }
-                if not set(evaluation.supporting_evidence_ids) <= linked_ids:
-                    uncertainty = True
+                # 这里曾有一条"报告的 claims 必须引用全部支撑证据，漏一条就降级"的检查。
+                # 规格只要求"每个关键结论建立真实链接"，并没有要求穷尽引用每一条证据；
+                # 那条检查比规格更严，而且会误伤——例如重复命中的日志、与结论无关的背景
+                # 日志都无需逐条引用。实测因此把一份基于 8 条真实命中的报告降级成证据不足。
+                # 结论是否有证据支撑由 validate_report 的 claims 检查与链接存在性负责。
             except Exception as error:
                 # 报告回退以前是静默的：任务仍然标记 succeeded，但页面只看到一份
                 # "证据不足"的兜底报告，无法判断是模型调用失败还是结构校验没过。
