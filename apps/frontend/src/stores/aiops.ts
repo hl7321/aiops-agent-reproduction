@@ -195,7 +195,15 @@ export function createAiopsStore(dependencies: AiopsStoreDependencies) {
           refreshInFlight = false;
         }
       };
-      const heartbeat = setInterval(() => { void refreshLiveState(); }, LIVE_REFRESH_INTERVAL_MS);
+      // 离开页面（reset）或换了一条流之后，这个定时器就没有意义了，自己停掉，
+      // 避免在后台继续对着旧任务发请求。
+      const heartbeat = setInterval(() => {
+        if (expectedGeneration !== generation || expectedStream !== streamGeneration) {
+          clearInterval(heartbeat);
+          return;
+        }
+        void refreshLiveState();
+      }, LIVE_REFRESH_INTERVAL_MS);
       try {
         for await (const event of dependencies.client.streamDiagnostic(taskId, lastSequence.value)) {
           if (expectedGeneration !== generation || expectedStream !== streamGeneration) return;
