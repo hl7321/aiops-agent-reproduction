@@ -222,6 +222,27 @@ describe("AiopsView", () => {
     });
   });
 
+  it("中栏三段可以拉动调整高度，且只在这两段之间一增一减", async () => {
+    const { wrapper } = await mountView();
+    await flushPromises();
+    const layout = (): string => wrapper.get(".center-body").attributes("data-layout") ?? "";
+    // happy-dom 不排版，clientHeight 恒为 0；这里给一个真实高度让换算成立。
+    Object.defineProperty(wrapper.get(".center-body").element, "clientHeight",
+      { value: 900, configurable: true });
+    expect(wrapper.findAll('[role="separator"]')).toHaveLength(2);
+    const before = layout().split("/");
+
+    // 向下拖：上面这段变高、下面这段等量变矮，第三段不动。
+    await wrapper.get('[data-splitter="report-ledger"]').trigger("keydown", { key: "ArrowDown" });
+    const after = layout().split("/");
+    expect(Number(after[0])).toBeGreaterThan(Number(before[0]));
+    expect(Number(after[1])).toBeLessThan(Number(before[1]));
+    expect(after[2]).toBe(before[2]);
+    expect(Number(after[0]) + Number(after[1])).toBeCloseTo(
+      Number(before[0]) + Number(before[1]), 2,
+    );
+  });
+
   it("沉淀案例摊开来源报告的反馈内容，同一时间只展开一份且能收起", async () => {
     const userFeedback = useUserFeedbackStore();
     // 反馈保存在"来源报告"这个目标下，案例详情按键名取出来展示。
