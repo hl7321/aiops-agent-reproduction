@@ -34,6 +34,13 @@
 - [2026-08-23-create-correlated-ecommerce-aiops-fixtures](./archive/2026-08-23-create-correlated-ecommerce-aiops-fixtures/)
 - [2026-08-23-publish-openspec-wiki](./archive/2026-08-23-publish-openspec-wiki/)
 - [2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance](./archive/2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance/)
+- [2026-09-17-fix-aiops-evidence-reference-contract](./archive/2026-09-17-fix-aiops-evidence-reference-contract/)
+- [2026-09-17-fix-aiops-query-artifact-and-tool-errors](./archive/2026-09-17-fix-aiops-query-artifact-and-tool-errors/)
+- [2026-09-18-expose-full-aiops-tool-schemas](./archive/2026-09-18-expose-full-aiops-tool-schemas/)
+- [2026-09-18-restructure-aiops-plan-execute-replan](./archive/2026-09-18-restructure-aiops-plan-execute-replan/)
+- [2026-09-19-fix-aiops-plan-completion-and-report-trust](./archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/)
+- [2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context](./archive/2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context/)
+- [2026-09-19-support-independent-chat-model-endpoint](./archive/2026-09-19-support-independent-chat-model-endpoint/)
 
 ## 主规格
 

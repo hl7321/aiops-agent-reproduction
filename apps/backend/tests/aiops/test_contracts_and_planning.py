@@ -5,23 +5,59 @@ from pathlib import Path
 import pytest
 
 from super_ai.aiops.evidence import alert_evidence, normalize_tool_evidence
+from super_ai.aiops.models import DiagnosticEvidenceRecord
 from super_ai.aiops.planning import (
+    REPORT_SYSTEM_PROMPT,
     PlanDraft,
     PlanStepDraft,
+    ReplanDraft,
     ReportDraft,
     SearchLogQueryDefaults,
-    ToolArgumentRepairDraft,
+    StepArgumentsDraft,
     create_validated_plan,
     find_search_log_tool,
     normalize_search_log_arguments,
     validate_plan,
 )
-from super_ai.aiops.reporting import build_fallback_report, validate_report
+from super_ai.aiops.reporting import (
+    CONCLUSION_LABELS,
+    REPORT_HEADINGS,
+    ROOT_CAUSE_LABELS,
+    SOLUTION_LABELS,
+    build_fallback_report,
+    validate_report,
+)
 from super_ai.aiops.router import map_job_event_to_sse
+from super_ai.aiops.runtime import _latest_query_artifact  # pyright: ignore[reportPrivateUsage]
+from super_ai.aiops.tool_adapters import (
+    adapt_allowed_tool_output,
+    inject_server_provided_arguments,
+    validate_tool_arguments,
+)
 from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
 from super_ai.api_contracts import ERROR_DEFINITIONS, CreateDiagnosticRequest, TaskStatusData
 from super_ai.app import create_app
 from super_ai.background_jobs.models import BackgroundJobEventRecord
+from super_ai.project_config import JsonValue
+
+
+def _evidence(title: str, source: str, metadata: dict[str, JsonValue]) -> DiagnosticEvidenceRecord:
+    now = datetime(2026, 9, 17, tzinfo=timezone.utc)
+    return DiagnosticEvidenceRecord(
+        id=f"evidence-{title}",
+        owner_user_id="owner",
+        diagnostic_task_id="task",
+        diagnostic_step_id=None,
+        tool_call_id=None,
+        kind="query_artifact",
+        source=source,
+        title=title,
+        summary=title,
+        content=title,
+        metadata=metadata,
+        observed_at=None,
+        created_at=now,
+    )
 
 
 def test_contracts_publish_diagnostics_and_shared_status() -> None:
@@ -50,88 +86,111 @@ def test_request_requires_query_or_real_alert_and_bounded_progress() -> None:
 def test_plan_requires_one_registered_search_log() -> None:
     draft = PlanDraft(
         steps=[
-            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={"q": "x"}),
-            PlanStepDraft(toolName="QueryMetric", purpose="查询指标", arguments={}),
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成检索语句"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志"),
+            PlanStepDraft(toolName="QueryMetric", purpose="查询指标"),
         ]
     )
     assert find_search_log_tool(("QueryMetric", "Search_Log")) == "Search_Log"
-    assert len(validate_plan(draft, ("SearchLog", "QueryMetric"))) == 2
+    steps = validate_plan(
+        draft, ("TextToSearchLogQuery", "SearchLog", "QueryMetric")
+    )
+    assert len(steps) == 3
+    # 计划阶段不产出任何参数值：参数由执行者在执行该步骤时生成。
+    assert [step.arguments for step in steps] == [{}, {}, {}]
     with pytest.raises(ValueError, match="只能包含一个"):
         validate_plan(
             PlanDraft(
                 steps=[
-                    PlanStepDraft(toolName="SearchLog", purpose="一", arguments={}),
-                    PlanStepDraft(toolName="search_log", purpose="二", arguments={}),
+                    PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成"),
+                    PlanStepDraft(toolName="SearchLog", purpose="一"),
+                    PlanStepDraft(toolName="search_log", purpose="二"),
                 ]
             ),
-            ("SearchLog", "search_log"),
+            ("TextToSearchLogQuery", "SearchLog", "search_log"),
         )
 
 
-def test_plan_requires_query_builder_only_for_untrusted_query() -> None:
-    direct = PlanDraft(
-        steps=[PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={})]
-    )
+def test_query_builder_is_always_required_before_log_search() -> None:
+    """统一成一条路：凡日志检索，必须先有一次生成查询的步骤。"""
+    direct = PlanDraft(steps=[PlanStepDraft(toolName="SearchLog", purpose="查询真实日志")])
     with pytest.raises(ValueError, match="TextToSearchLogQuery"):
-        validate_plan(
-            direct,
-            ("TextToSearchLogQuery", "SearchLog"),
-            query_is_trusted=False,
-        )
+        validate_plan(direct, ("TextToSearchLogQuery", "SearchLog"))
 
     built = PlanDraft(
         steps=[
-            PlanStepDraft(
-                toolName="TextToSearchLogQuery", purpose="生成查询", arguments={}
-            ),
-            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志", arguments={}),
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询真实日志"),
         ]
     )
-    assert len(
-        validate_plan(
-            built,
-            ("TextToSearchLogQuery", "SearchLog"),
-            query_is_trusted=False,
-        )
-    ) == 2
-    with pytest.raises(ValueError, match="无需重复"):
-        validate_plan(
-            built,
-            ("TextToSearchLogQuery", "SearchLog"),
-            query_is_trusted=True,
-        )
+    assert len(validate_plan(built, ("TextToSearchLogQuery", "SearchLog"))) == 2
 
-
-def test_temporal_claim_requires_context_after_search() -> None:
-    missing = PlanDraft(
-        requiresTemporalContext=True,
-        steps=[PlanStepDraft(toolName="SearchLog", purpose="查询日志", arguments={})],
-    )
-    with pytest.raises(ValueError, match="DescribeLogContext"):
-        validate_plan(
-            missing,
-            ("SearchLog", "DescribeLogContext"),
-            query_is_trusted=True,
-        )
-
-    valid = PlanDraft(
-        requiresTemporalContext=True,
+    reversed_plan = PlanDraft(
         steps=[
-            PlanStepDraft(toolName="SearchLog", purpose="查询日志", arguments={}),
-            PlanStepDraft(
-                toolName="DescribeLogContext", purpose="验证调用时序", arguments={}
-            ),
-        ],
+            PlanStepDraft(toolName="SearchLog", purpose="先检索"),
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="后生成"),
+        ]
     )
-    assert [step.tool_name for step in validate_plan(
-        valid,
-        ("SearchLog", "DescribeLogContext"),
-        query_is_trusted=True,
-    )] == ["SearchLog", "DescribeLogContext"]
+    with pytest.raises(ValueError, match="TextToSearchLogQuery"):
+        validate_plan(reversed_plan, ("TextToSearchLogQuery", "SearchLog"))
+
+
+def test_unregistered_tool_is_rejected_with_available_names() -> None:
+    draft = PlanDraft(steps=[PlanStepDraft(toolName="RestartService", purpose="重启服务")])
+
+    with pytest.raises(ValueError, match="未发现的工具"):
+        validate_plan(draft, ("TextToSearchLogQuery", "SearchLog"))
+
+
+def test_tool_name_matching_is_loose_and_resolves_to_real_names() -> None:
+    """工具名匹配与语义登记表使用同一套归一化规则。"""
+    draft = PlanDraft(
+        steps=[
+            PlanStepDraft(toolName="text_to_search_log_query", purpose="生成查询"),
+            PlanStepDraft(toolName="search_log", purpose="检索日志"),
+        ]
+    )
+
+    steps = validate_plan(draft, ("TextToSearchLogQuery", "SearchLog"))
+
+    assert [step.tool_name for step in steps] == ["TextToSearchLogQuery", "SearchLog"]
+
+
+def test_plan_no_longer_carries_a_temporal_flag() -> None:
+    """时序概念已退役：计划输出里不再有 requiresTemporalContext。"""
+    assert "requiresTemporalContext" not in PlanDraft.model_json_schema(by_alias=True).get(
+        "properties", {}
+    )
+    assert "requiresTemporalContext" not in ReplanDraft.model_json_schema(by_alias=True).get(
+        "properties", {}
+    )
+
+
+def test_plan_without_context_step_is_valid_and_retired_tool_is_rejected() -> None:
+    """需要前后过程的计划不再强制上下文步骤；已被退役的工具仍然不可规划。"""
+    plain = PlanDraft(
+        steps=[
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询日志"),
+        ]
+    )
+    assert [
+        step.tool_name for step in validate_plan(plain, ("TextToSearchLogQuery", "SearchLog"))
+    ] == ["TextToSearchLogQuery", "SearchLog"]
+
+    with_retired_tool = PlanDraft(
+        steps=[
+            PlanStepDraft(toolName="TextToSearchLogQuery", purpose="生成查询"),
+            PlanStepDraft(toolName="SearchLog", purpose="查询日志"),
+            PlanStepDraft(toolName="DescribeLogContext", purpose="查前后日志"),
+        ]
+    )
+    with pytest.raises(ValueError, match="未发现的工具"):
+        validate_plan(with_retired_tool, ("TextToSearchLogQuery", "SearchLog"))
 
 
 async def test_planner_validation_correction_is_bounded_to_three_attempts() -> None:
-    descriptor = ToolCapabilityDescriptor(
+    search_descriptor = ToolCapabilityDescriptor(
         name="SearchLog",
         description="查询日志",
         input_schema={"type": "object", "properties": {}, "required": []},
@@ -141,6 +200,17 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
         dependencies=(),
         required_for_profile=True,
     )
+    builder_descriptor = ToolCapabilityDescriptor(
+        name="TextToSearchLogQuery",
+        description="生成检索语句",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        capability="query_builder",
+        artifact_kind="query_artifact",
+        read_only=True,
+        dependencies=(),
+        required_for_profile=False,
+    )
+    catalog = (builder_descriptor, search_descriptor)
 
     class CorrectingModel:
         def __init__(self, succeeds: bool) -> None:
@@ -156,17 +226,24 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
         ) -> PlanDraft:
             assert context and tool_catalog
             self.errors.append(tuple(validation_errors))
-            name = "SearchLog" if self.succeeds and len(self.errors) == 3 else "UnknownTool"
+            plan_steps = (
+                [("TextToSearchLogQuery", "生成查询"), ("SearchLog", "查询真实日志")]
+                if self.succeeds and len(self.errors) == 3
+                else [("UnknownTool", "查询")]
+            )
             return PlanDraft(
-                steps=[PlanStepDraft(toolName=name, purpose="查询", arguments={})]
+                steps=[
+                    PlanStepDraft(toolName=name, purpose=purpose)
+                    for name, purpose in plan_steps
+                ]
             )
 
         async def replan(self, **_kwargs: object):  # pragma: no cover - protocol filler
             raise AssertionError
 
-        async def repair_tool_arguments(
+        async def fill_step_arguments(
             self, **_kwargs: object
-        ) -> ToolArgumentRepairDraft:  # pragma: no cover - protocol filler
+        ) -> StepArgumentsDraft:  # pragma: no cover - protocol filler
             raise AssertionError
 
         async def report(self, **_kwargs: object):  # pragma: no cover - protocol filler
@@ -176,12 +253,11 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
     plan = await create_validated_plan(
         corrected,
         context="安全上下文",
-        tool_catalog=(descriptor,),
-        query_is_trusted=True,
+        tool_catalog=catalog,
     )
-    assert plan[0].tool_name == "SearchLog"
+    assert [step.tool_name for step in plan] == ["TextToSearchLogQuery", "SearchLog"]
     assert corrected.errors[0] == ()
-    assert "未注册工具" in corrected.errors[1][0]
+    assert "未发现的工具" in corrected.errors[1][0]
     assert len(corrected.errors) == 3
 
     never_valid = CorrectingModel(False)
@@ -189,13 +265,16 @@ async def test_planner_validation_correction_is_bounded_to_three_attempts() -> N
         await create_validated_plan(
             never_valid,
             context="安全上下文",
-            tool_catalog=(descriptor,),
-            query_is_trusted=True,
+            tool_catalog=catalog,
         )
     assert len(never_valid.errors) == 3
 
 
-def test_official_search_log_arguments_use_real_schema_and_deployment_defaults() -> None:
+def test_search_log_arguments_only_inject_server_authoritative_fields() -> None:
+    """规范化只做两件事：注入 Region/TopicId、过滤官方 schema 之外的键。
+
+    模型给出的时间与查询原样保留：不再补默认值、不再改写键名、不再换算单位。
+    """
     schema = {
         "type": "object",
         "properties": {
@@ -212,17 +291,16 @@ def test_official_search_log_arguments_use_real_schema_and_deployment_defaults()
 
     normalized = normalize_search_log_arguments(
         {
-            "logQuery": "trace_id:4a0001",
+            "Query": "trace_id:4a0001",
+            "From": 1_787_476_500_000,
+            "To": 1_787_480_100_000,
+            "Limit": 50,
             "Region": "model-region",
             "TopicId": "model-topic",
-            "timeRange": "2026-08-23T10:00:00Z~2026-08-23T10:15:00Z",
-            "limit": 50,
-            "logset": "payment-service",
+            "logset": "payment-service",   # 官方 schema 之外的键会被过滤
         },
         schema=schema,
         defaults=SearchLogQueryDefaults(region="ap-guangzhou", topic_id="topic-real"),
-        now_ms=lambda: 1_787_480_100_000,
-        fallback_query='incident_id:"java-ecom-001"',
     )
 
     assert normalized == {
@@ -239,37 +317,33 @@ def test_official_search_log_arguments_use_real_schema_and_deployment_defaults()
             {"Query": "*"},
             schema=schema,
             defaults=SearchLogQueryDefaults(region="", topic_id=""),
-            now_ms=lambda: 1_787_480_100_000,
-            fallback_query="*",
         )
 
 
-def test_search_log_arguments_accept_official_flat_field_mapping() -> None:
+def test_search_log_arguments_reject_lowercase_alias_keys() -> None:
+    """别名映射已删除：官方 schema 用 Query，模型写 query 属于缺必填，应当直接失败。"""
     schema = {
-        "From": {"type": "number"},
-        "To": {"type": "number"},
-        "Query": {"type": "string"},
-        "TopicId": {"type": "string"},
-        "Region": {"type": "string"},
-        "Limit": {"type": "number", "default": 10},
+        "type": "object",
+        "properties": {
+            "From": {"type": "number"},
+            "To": {"type": "number"},
+            "Query": {"type": "string"},
+            "TopicId": {"type": "string"},
+            "Region": {"type": "string"},
+            "Limit": {"type": "number", "default": 10},
+        },
+        "required": ["From", "To", "Query", "Region"],
     }
-    normalized = normalize_search_log_arguments(
-        {"query": 'trace_id:"trace-1"'},
-        schema=schema,
-        defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
-        now_ms=lambda: 4_000_000,
-        fallback_query="*",
-    )
-    assert normalized == {
-        "From": 400_000,
-        "To": 4_000_000,
-        "Query": 'trace_id:"trace-1"',
-        "TopicId": "topic-real",
-        "Region": "ap-guangzhou",
-    }
+    with pytest.raises(ValueError, match="缺少必填字段"):
+        normalize_search_log_arguments(
+            {"query": 'trace_id:"trace-1"'},
+            schema=schema,
+            defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+        )
 
 
-def test_search_log_arguments_convert_unix_seconds_to_milliseconds() -> None:
+def test_search_log_arguments_keep_model_time_units_untouched() -> None:
+    """秒级换算已删除：官方 schema 写明单位是毫秒，模型填错应当失败而不是被偷偷换算。"""
     schema = {
         "From": {"type": "number"},
         "To": {"type": "number"},
@@ -280,14 +354,13 @@ def test_search_log_arguments_convert_unix_seconds_to_milliseconds() -> None:
         {"From": 1_787_472_000, "To": 1_787_480_100, "Query": "*"},
         schema=schema,
         defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
-        now_ms=lambda: 1_787_480_100_000,
-        fallback_query="*",
     )
-    assert normalized["From"] == 1_787_472_000_000
-    assert normalized["To"] == 1_787_480_100_000
+    assert normalized["From"] == 1_787_472_000
+    assert normalized["To"] == 1_787_480_100
 
 
-def test_search_log_arguments_reject_stale_model_time_window() -> None:
+def test_search_log_arguments_do_not_reset_stale_time_window() -> None:
+    """时间窗重置已删除：窗口是否合法交由 SearchLogInput 的 from<to 业务校验判定。"""
     schema = {
         "From": {"type": "number"},
         "To": {"type": "number"},
@@ -298,18 +371,109 @@ def test_search_log_arguments_reject_stale_model_time_window() -> None:
         {"From": 1_724_486_988, "To": 1_724_494_188, "Query": "*"},
         schema=schema,
         defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
-        now_ms=lambda: 1_787_480_100_000,
-        fallback_query="*",
     )
-    assert normalized["From"] == 1_787_476_500_000
-    assert normalized["To"] == 1_787_480_100_000
+    assert normalized["From"] == 1_724_486_988
+    assert normalized["To"] == 1_724_494_188
 
 
-def test_evidence_rejects_unknown_payload_and_fallback_is_honest() -> None:
-    with pytest.raises(ValueError, match="无法安全映射"):
-        normalize_tool_evidence(
-            tool_name="RestartService", result={"ok": True}, step_id="step", tool_call_id="call"
+def test_auxiliary_tool_output_becomes_intermediate_artifact() -> None:
+    """只读辅助工具的产物以 query_artifact 落库，供后续步骤与 Replanner 使用。"""
+    structured = adapt_allowed_tool_output(
+        "ConvertTimestampToTimeString",
+        {"currentTime": "2026-09-17T12:00:00Z"},
+    )
+    assert structured.kind == "query_artifact"
+    assert structured.payload == {"currentTime": "2026-09-17T12:00:00Z"}
+
+    # 标量返回也要能被安全包起来，而不是直接失败
+    scalar = adapt_allowed_tool_output(
+        "GetRegionCodeByName",
+        [{"type": "text", "text": "ap-guangzhou"}],
+    )
+    assert scalar.kind == "query_artifact"
+    assert scalar.payload == {"value": "ap-guangzhou"}
+
+
+def test_auxiliary_artifact_is_never_used_as_search_query() -> None:
+    """辅助产物即使含 Query 字段，也不能被当成 SearchLog 的查询。"""
+    auxiliary = _evidence("辅助产物", "ConvertTimestampToTimeString", {"Query": "*"})
+    builder = _evidence("查询产物", "TextToSearchLogQuery", {"Query": 'service:"a"'})
+
+    assert _latest_query_artifact((auxiliary, builder)) == 'service:"a"'
+    assert _latest_query_artifact((auxiliary,)) is None
+
+
+def test_unregistered_tool_output_becomes_intermediate_artifact() -> None:
+    """未登记 adapter 的只读工具，产物按中间产物落库，不冒充证据。"""
+    records = normalize_tool_evidence(
+        tool_name="GetAlarmLog",
+        result={"Results": [{"Content": "告警执行详情"}]},
+        step_id="step",
+        tool_call_id="call",
+    )
+
+    assert len(records) == 1
+    assert records[0].kind == "query_artifact"
+    assert records[0].source == "GetAlarmLog"
+
+
+_GENERIC_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "Region": {"type": "string"},
+        "TopicId": {"type": "string"},
+        "Limit": {"type": "integer", "minimum": 1, "maximum": 100},
+        "Sort": {"type": "string", "enum": ["asc", "desc"]},
+    },
+    "required": ["Region"],
+}
+
+
+def test_generic_input_validation_rejects_bad_arguments() -> None:
+    """通用入参校验：未声明键、缺必填、类型、枚举与范围都要在调用前拦住。"""
+    with pytest.raises(ValueError, match="未声明的键"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {": ": "order-service", "Region": "ap-guangzhou"}
         )
+    with pytest.raises(ValueError, match="缺少必填字段"):
+        validate_tool_arguments("DescribeTopics", _GENERIC_SCHEMA, {"Limit": 10})
+    with pytest.raises(ValueError, match="类型应为 integer"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Limit": "10"}
+        )
+    with pytest.raises(ValueError, match="不得大于"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Limit": 500}
+        )
+    with pytest.raises(ValueError, match="取值必须属于"):
+        validate_tool_arguments(
+            "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Sort": "up"}
+        )
+
+    accepted = validate_tool_arguments(
+        "DescribeTopics", _GENERIC_SCHEMA, {"Region": "ap-guangzhou", "Limit": 10}
+    )
+    assert accepted == {"Region": "ap-guangzhou", "Limit": 10}
+
+
+def test_server_provided_arguments_override_model_values() -> None:
+    """服务端权威字段无条件注入；模型填的同名值被忽略，未声明键被过滤。"""
+    merged = inject_server_provided_arguments(
+        "SearchLog",
+        _GENERIC_SCHEMA,
+        {"Region": "model-value", "TopicId": "model-topic", "Limit": 10, "Unknown": 1},
+        region="ap-guangzhou",
+        topic_id="topic-real",
+    )
+
+    assert merged == {
+        "Region": "ap-guangzhou",
+        "TopicId": "topic-real",
+        "Limit": 10,
+    }
+
+
+def test_fallback_report_is_honest() -> None:
     markdown, links = build_fallback_report([{"alertName": "HighError"}], [])
     assert "证据不足" in markdown
     assert "# 告警分析报告" in markdown
@@ -380,3 +544,21 @@ def test_persisted_terminal_event_maps_to_one_complete_and_shared_error() -> Non
     failed_payloads = map_job_event_to_sse(failed, "task")
     assert [item["type"] for item in success_payloads] == ["complete"]
     assert [item["type"] for item in failed_payloads] == ["complete"]
+
+
+def test_report_prompt_states_every_required_literal_label() -> None:
+    """报告提示词必须逐字包含校验器要求的标签，避免再次漂移。
+
+    真机上模型按 `- **告警名称**: ...` 这种半角风格书写，被校验器判为
+    "模型报告缺少固定中文字段"，报告直接走兜底，任务却仍标记成功。
+    """
+    required = (
+        *REPORT_HEADINGS,
+        *ROOT_CAUSE_LABELS,
+        *SOLUTION_LABELS,
+        *CONCLUSION_LABELS,
+    )
+
+    missing = [label for label in required if label not in REPORT_SYSTEM_PROMPT]
+
+    assert missing == []

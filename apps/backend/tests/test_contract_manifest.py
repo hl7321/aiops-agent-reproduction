@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import cast
+from typing import cast, get_args
 
 import pytest
 from pydantic import TypeAdapter
@@ -20,6 +20,7 @@ from super_ai.api_contracts import (
     ChatPrompt,
     ChatSession,
     ChatSkill,
+    DiagnosticEvidenceKind,
     ErrorEvent,
     LoginData,
     LogoutData,
@@ -407,6 +408,47 @@ def test_all_sse_event_shapes_round_trip(event: dict[str, object]) -> None:
         source["bm25Rank"] = event["data"]["source"]["bm25Rank"]  # type: ignore[index]
         source["bm25Score"] = event["data"]["source"]["bm25Score"]  # type: ignore[index]
     assert dumped == event
+
+
+def test_aiops_reference_source_covers_every_diagnostic_evidence_kind() -> None:
+    """aiops 频道的证据引用形状必须覆盖 DiagnosticEvidenceKind 的每个取值。
+
+    这条用例守住的是"诊断会发出哪几种证据"与"共享 SSE 合同认哪几种"之间的边界：
+    后端一旦新增证据种类，这里会先失败，从而强制同步契约与前端 guard。
+    """
+    kinds = get_args(DiagnosticEvidenceKind)
+    assert set(kinds) == {
+        "alert",
+        "knowledge",
+        "log",
+        "log_hit",
+        "log_context",
+        "query_artifact",
+        "metric",
+    }, "证据种类清单发生变化时必须同步共享契约、前端 guard 与本测试"
+
+    adapter: TypeAdapter[SseEvent] = TypeAdapter(SseEvent)
+    for index, kind in enumerate(kinds, start=1):
+        event: dict[str, object] = {
+            "id": f"evt-aiops-reference-{kind}",
+            "sequence": index,
+            "type": "reference.source",
+            "channel": "aiops",
+            "timestamp": "2026-08-07T12:00:00Z",
+            "data": {
+                "source": {
+                    "evidenceId": f"evidence-{kind}",
+                    "kind": kind,
+                    "source": "SearchLog",
+                    "title": f"{kind} 证据",
+                    "excerpt": "样例证据摘要",
+                    "metadata": {},
+                }
+            },
+        }
+
+        parsed: SseEvent = adapter.validate_python(event)
+        assert parsed.model_dump(mode="json", by_alias=True, exclude_none=True) == event
 
 
 def test_sse_error_reuses_http_error_model() -> None:

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from super_ai.agent_audit.models import AgentToolCallAuditRecord
 from super_ai.agent_audit.repositories import AgentToolCallAuditRepository
 from super_ai.aiops.evidence import alert_evidence, sanitize_alert_snapshot
+from super_ai.aiops.execution_result import build_execution_result
 from super_ai.aiops.models import (
     DiagnosticEvidenceRecord,
     DiagnosticReportRecord,
@@ -35,6 +36,8 @@ class DiagnosticEvidenceChain:
     evidence: tuple[DiagnosticEvidenceRecord, ...]
     links: tuple[ReportEvidenceLinkRecord, ...]
     audits: tuple[AgentToolCallAuditRecord, ...]
+    # 后端组装的完整执行结果（含耗时与逐步对账），供前端展示"一次点击发生了什么"。
+    execution_result: dict[str, JsonValue] | None = None
 
 
 class DiagnosticService:
@@ -88,11 +91,14 @@ class DiagnosticService:
 
     async def evidence_chain(self, owner_user_id: str, task_id: str) -> DiagnosticEvidenceChain:
         task = await self._required_task(owner_user_id, task_id)
+        evidence = tuple(await self._diagnostics.list_evidence(owner_user_id, task_id))
+        steps = tuple(await self._diagnostics.list_steps(owner_user_id, task_id))
         return DiagnosticEvidenceChain(
             task,
-            tuple(await self._diagnostics.list_evidence(owner_user_id, task_id)),
+            evidence,
             tuple(await self._diagnostics.list_links(owner_user_id, task_id)),
             tuple(await self._audits.list_for_diagnostic(owner_user_id, task_id)),
+            build_execution_result(task.current_plan, steps, evidence, task=task),
         )
 
     async def _required_task(self, owner_user_id: str, task_id: str) -> DiagnosticTaskRecord:

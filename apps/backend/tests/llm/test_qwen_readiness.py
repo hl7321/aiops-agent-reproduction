@@ -163,3 +163,50 @@ async def test_chat_readiness_ainvoke_exception_is_also_redacted() -> None:
 
     assert api_key not in str(captured.value)
     assert str(captured.value).count("[redacted]") == 2
+
+
+async def test_chat_readiness_reports_effective_override_endpoint() -> None:
+    """chat 配了独立端点时，readiness 要报 chat 真正打的那个地址，而不是顶层默认地址。"""
+
+    def chat_factory(**_kwargs: Any) -> BaseChatModel:
+        return cast(BaseChatModel, FakeChatModel())
+
+    provider = QwenOpenAIProvider(
+        make_settings(
+            chat_model="deepseek-chat",
+            chat_base_url="https://api.deepseek.example/v1",
+            chat_api_key="chat-level-key",
+        ),
+        chat_factory=chat_factory,
+    )
+
+    result = await provider.readiness("chat")
+
+    assert result.model == "deepseek-chat"
+    assert result.base_url == "https://api.deepseek.example/v1"
+
+
+async def test_chat_readiness_redacts_both_chat_and_top_level_keys() -> None:
+    """两把 key 同时存在时，异常里出现任何一把都必须被替换掉。"""
+    top_key = "SENTINEL_TOP_LEVEL_KEY"
+    chat_key = "SENTINEL_CHAT_LEVEL_KEY"
+
+    class FailingChat(FakeChatModel):
+        async def ainvoke(self, value: object) -> object:
+            raise RuntimeError(f"chat={chat_key}; top={top_key}")
+
+    def chat_factory(**_kwargs: Any) -> BaseChatModel:
+        return cast(BaseChatModel, FailingChat())
+
+    provider = QwenOpenAIProvider(
+        make_settings(api_key=top_key, chat_api_key=chat_key),
+        chat_factory=chat_factory,
+    )
+
+    with pytest.raises(ModelProviderError) as captured:
+        await provider.readiness("chat")
+
+    message = str(captured.value)
+    assert chat_key not in message
+    assert top_key not in message
+    assert message.count("[redacted]") == 2

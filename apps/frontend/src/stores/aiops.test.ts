@@ -34,7 +34,7 @@ const JOB: BackgroundJob = {
 };
 const DETAIL: DiagnosticDetailData = { task: TASK, backgroundJob: JOB, steps: [], report: null };
 const CHAIN: DiagnosticEvidenceChainData = {
-  taskId: TASK.id, evidence: [], reportEvidenceLinks: [], toolAudits: [],
+  taskId: TASK.id, evidence: [], reportEvidenceLinks: [], toolAudits: [], executionResult: null,
 };
 const CASE: DiagnosticCase = {
   id: "case-1", ownerUserId: "user-1", taskId: TASK.id, reportId: "report-1",
@@ -53,7 +53,7 @@ function fakeClient(events: readonly SseEvent[] = []): AiopsClient {
     listDiagnostics: vi.fn(async () => result({ items: [TASK] })),
     getDiagnostic: vi.fn(async () => result(DETAIL)),
     getEvidenceChain: vi.fn(async () => result(CHAIN)),
-    async *streamDiagnostic(): AsyncIterable<SseEvent> { for (const event of events) yield event; },
+    streamDiagnostic: vi.fn(async function* () { for (const event of events) yield event; }),
     cancelBackgroundJob: vi.fn(async () => result<BackgroundJob>({ ...JOB, status: "cancelled" })),
     listCases: vi.fn(async () => result({ items: [CASE] })),
     getCase: vi.fn(async () => result({ item: CASE })),
@@ -112,7 +112,47 @@ describe("AIOps store", () => {
     expect(store.lastSequence).toBe(2);
     expect(store.streamDisconnected).toBe(false);
     expect(store.timeline[0]?.phase).toBe("planner");
-    expect(client.getDiagnostic).toHaveBeenCalledTimes(2);
+    // select 一次 + 运行中按 task.status 刷新一次 + 流结束后对账一次
+    expect(client.getDiagnostic).toHaveBeenCalledTimes(3);
+  });
+
+  it("运行中随步骤完成持续刷新执行总账，而不是等流结束才刷新", async () => {
+    const client = fakeClient([
+      { id: "1", sequence: 1, type: "tool.call", channel: "aiops", timestamp: "now",
+        data: { toolCallId: "c1", toolName: "SearchLog", lifecycle: "started", input: { argumentKeys: [] } } },
+      { id: "2", sequence: 2, type: "tool.call", channel: "aiops", timestamp: "now",
+        data: { toolCallId: "c1", toolName: "SearchLog", lifecycle: "completed", output: { summary: "命中 4 条" } } },
+      { id: "3", sequence: 3, type: "complete", channel: "aiops", timestamp: "now",
+        data: { finishReason: "stop" } },
+    ]);
+    const store = createAiopsStore({ client })();
+    await store.selectDiagnostic(TASK.id);
+    expect(client.getEvidenceChain).toHaveBeenCalledTimes(1);
+
+    await store.subscribeActive();
+
+    // started 与 completed 各触发一次运行中刷新，流结束后再对账一次，共 1 + 2 + 1 = 4 次。
+    // 期望是"运行中就一直在拉"，而不是攒到流结束才拉一次。
+    expect(vi.mocked(client.getEvidenceChain).mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("运行中的诊断在恢复快照后自动接回实时流，已结束的任务不订阅", async () => {
+    const running = fakeClient();
+    const runningStore = createAiopsStore({ client: running })();
+    runningStore.activeDetail = {
+      ...DETAIL,
+      task: { ...TASK, status: "running" },
+      backgroundJob: { ...JOB, status: "running" },
+    };
+    runningStore.resumeStreamIfActive();
+    await vi.waitFor(() => expect(running.streamDiagnostic).toHaveBeenCalledTimes(1));
+
+    const finished = fakeClient();
+    const finishedStore = createAiopsStore({ client: finished })();
+    finishedStore.activeDetail = DETAIL; // task 与 job 都是 succeeded
+    finishedStore.resumeStreamIfActive();
+    await Promise.resolve();
+    expect(finished.streamDiagnostic).not.toHaveBeenCalled();
   });
 
   it("断流后只做一次 REST 恢复且不自动重新订阅", async () => {
@@ -129,7 +169,9 @@ describe("AIOps store", () => {
     expect(store.streamDisconnected).toBe(true);
     expect(store.streamError).toContain("network gone");
     expect(client.streamDiagnostic).toHaveBeenCalledTimes(1);
-    expect(client.getDiagnostic).toHaveBeenCalledTimes(2);
+    // 三次 = select 一次 + running 状态事件触发的运行中刷新一次 + 断流后的 REST 恢复一次。
+    // 关键断言是"不自动重新订阅"（上面的 streamDiagnostic 只调了一次）与"恢复只做一轮"。
+    expect(client.getDiagnostic).toHaveBeenCalledTimes(3);
   });
 
   it("通过 background job id 取消并解析案例知识文档目标", async () => {
@@ -144,6 +186,9 @@ describe("AIOps store", () => {
     expect(await store.knowledgeDocumentTarget()).toEqual({
       knowledgeBaseId: "kb-1", documentId: CASE.documentId,
     });
+    // 收起：详情面板的展开状态归零。
+    store.closeCase();
+    expect(store.selectedCase).toBeNull();
   });
 
   it("单个告警 source 失败不阻止历史和案例恢复", async () => {

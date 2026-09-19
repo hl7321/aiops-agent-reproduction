@@ -38,6 +38,7 @@ from super_ai.api_contracts import (
     DiagnosticDetailData,
     DiagnosticEvidence,
     DiagnosticEvidenceChainData,
+    DiagnosticExecutionResult,
     DiagnosticListData,
     DiagnosticPlanStep,
     DiagnosticReport,
@@ -408,4 +409,9 @@ def _chain(chain: DiagnosticEvidenceChain) -> DiagnosticEvidenceChainData:
         evidence=[_evidence(item) for item in chain.evidence],
         reportEvidenceLinks=[_link(item) for item in chain.links],
         toolAudits=[_audit(item) for item in chain.audits],
+        executionResult=(
+            None
+            if chain.execution_result is None
+            else DiagnosticExecutionResult.model_validate(chain.execution_result)
+        ),
     )

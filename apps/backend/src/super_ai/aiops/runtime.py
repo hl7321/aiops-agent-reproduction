@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, TypedDict, cast
 from uuid import uuid4
@@ -20,6 +21,7 @@ from super_ai.aiops.cls_tool_adapters import (
 )
 from super_ai.aiops.evidence import knowledge_evidence, normalize_tool_evidence
 from super_ai.aiops.evidence_policy import evaluate_claim_evidence
+from super_ai.aiops.execution_result import build_execution_result
 from super_ai.aiops.models import (
     DiagnosticEvidenceRecord,
     DiagnosticReportRecord,
@@ -28,9 +30,8 @@ from super_ai.aiops.models import (
     PlanStep,
 )
 from super_ai.aiops.planning import (
-    MAX_REPLANS,
+    MAX_STEP_ATTEMPTS,
     DiagnosticModel,
-    PlanDraft,
     SearchLogQueryDefaults,
     create_validated_plan,
     find_search_log_tool,
@@ -38,13 +39,14 @@ from super_ai.aiops.planning import (
     is_query_builder_tool,
     is_search_log_tool,
     normalize_search_log_arguments,
+    require_plan_step_at,
     summarize_evidence,
-    validate_plan,
 )
 from super_ai.aiops.reporting import build_fallback_report, validate_report
 from super_ai.aiops.tool_adapters import (
     ensure_core_tool_schema_compatible,
-    validate_runtime_tool_input,
+    inject_server_provided_arguments,
+    validate_tool_arguments,
 )
 from super_ai.aiops.tool_failures import (
     ToolConfigurationError,
@@ -57,6 +59,7 @@ from super_ai.aiops.tool_policy import (
     ToolCapabilityDescriptor,
     build_aiops_tool_registry,
     describe_builtin_knowledge_tool,
+    visible_argument_names,
 )
 from super_ai.api_contracts import (
     ERROR_DEFINITIONS,
@@ -83,6 +86,8 @@ from super_ai.project_config import JsonValue
 from super_ai.retrieval.tool import create_knowledge_retrieval_tool
 from super_ai.runtime.logging import log_lifecycle
 from super_ai.tenancy.context import CurrentUser
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeSource(Protocol):
@@ -278,7 +283,6 @@ class DiagnosticRuntime:
                         knowledge_descriptor,
                         *aiops_registry.catalog,
                     ),
-                    query_is_trusted=task.query is None,
                 )
                 task = await self._store.call("save_plan", owner, task_id, plan, replan_count=0)
                 if task is None:
@@ -311,11 +315,14 @@ class DiagnosticRuntime:
                 state = {**state, "route": SSE_REPORT_TYPE}
                 await checkpoint("executor", state)
                 return state
-            plan_step = task.current_plan[state["next_position"]]
+            plan_step = require_plan_step_at(task.current_plan, state["next_position"])
             tool = tools.get(plan_step.tool_name)
             if tool is None:
                 raise ValueError(f"计划工具在恢复后不可用: {plan_step.tool_name}")
-            candidate_arguments = dict(plan_step.arguments)
+            descriptor = tool_descriptors.get(plan_step.tool_name)
+            if descriptor is None:
+                raise ValueError(f"工具能力描述不可用: {plan_step.tool_name}")
+            candidate_arguments: dict[str, JsonValue] = {}
             evidence = await self._store.call("list_evidence", owner, task_id)
             existing_steps = await self._store.call("list_steps", owner, task_id)
             matching_attempts = [
@@ -336,13 +343,22 @@ class DiagnosticRuntime:
                         error_category="provider_unavailable",
                     )
             first_attempt = max((item.attempt for item in matching_attempts), default=0) + 1
-            if first_attempt > 3:
-                state = {**state, "last_error": "工具步骤已达到三次尝试上限"}
+            if first_attempt > MAX_STEP_ATTEMPTS:
+                # 恢复时发现这一步已经用完尝试次数：如实记录并继续处理剩余步骤，
+                # 不能因为历史失败把整份计划提前终止。
+                state = {
+                    **state,
+                    "next_position": state["next_position"] + 1,
+                    "last_error": f"工具步骤已达到 {MAX_STEP_ATTEMPTS} 次尝试上限",
+                }
                 await checkpoint("executor", state)
                 return state
-            for attempt in range(first_attempt, 4):
+            previous_error: str | None = None
+            step_succeeded = False
+            for attempt in range(first_attempt, MAX_STEP_ATTEMPTS + 1):
                 await context.raise_if_cancelled()
-                invocation_arguments = candidate_arguments
+                # 每轮从空参数开始：真正待调用的参数在模型填参并过滤之后才确定。
+                invocation_arguments: dict[str, JsonValue] = {}
                 phase = "input"
                 step = None
                 call_id = uuid4().hex
@@ -356,6 +372,27 @@ class DiagnosticRuntime:
                         raise ToolSchemaIncompatibleError(
                             f"{plan_step.tool_name} runtime Schema 与本地 adapter 不兼容"
                         ) from error
+                    # 每一步执行前由执行者生成该步参数：模型看得到当前工具的完整说明、
+                    # 整份计划与前面步骤的真实产出，因此这一步填的是真实值而不是占位符。
+                    filled = await self._model.fill_step_arguments(
+                        context=_step_argument_context(task.alerts, evidence),
+                        tool=descriptor,
+                        plan=task.current_plan,
+                        step=plan_step,
+                        previous_error=previous_error,
+                    )
+                    # 只接受模型可见说明里出现过的键：服务端注入字段与当前实现不支持的
+                    # 字段（例如 SearchLog 的 Topics）一律丢弃，避免与注入值冲突，
+                    # 也避免本地输入模型因为一个陌生键拒绝整次调用。
+                    visible = visible_argument_names(descriptor)
+                    candidate_arguments = {
+                        key: value
+                        for key, value in filled.arguments.items()
+                        if key in visible
+                    }
+                    # 注意：这里必须用刚填好的 candidate_arguments 初始化待调用参数。
+                    # 在进入循环时提前赋值会用到上一轮的旧值，导致第一次调用拿到空参数。
+                    invocation_arguments = candidate_arguments
                     if is_query_builder_tool(plan_step.tool_name):
                         if self._search_log_defaults is None:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")
@@ -380,8 +417,6 @@ class DiagnosticRuntime:
                             proposed,
                             schema=_tool_schema(tool),
                             defaults=self._search_log_defaults,
-                            now_ms=self._now_ms,
-                            fallback_query=_search_log_fallback_query(task.alerts),
                         )
                         invocation_arguments = cast(
                             dict[str, JsonValue],
@@ -390,6 +425,9 @@ class DiagnosticRuntime:
                             ),
                         )
                     elif is_log_context_tool(plan_step.tool_name):
+                        # 当前数据源已退役日志上下文工具（必填的上报包 ID 拿不到），因此
+                        # 这个分支不可达。保留装配逻辑是为了将来数据源变化、该工具重新
+                        # 可用时能直接启用——与 replanner 保留换计划代码路径同一原则。
                         if self._search_log_defaults is None:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")
                         hit = _latest_log_hit(evidence)
@@ -403,8 +441,19 @@ class DiagnosticRuntime:
                                 proposed=candidate_arguments,
                             ).model_dump(mode="json", by_alias=True),
                         )
-                    invocation_arguments = validate_runtime_tool_input(
-                        tool, invocation_arguments
+                    else:
+                        # 其他真实发现的只读工具：注入服务端权威字段后做通用校验。
+                        if self._search_log_defaults is None:
+                            raise ToolConfigurationError("CLS 本地权威配置缺失")
+                        invocation_arguments = inject_server_provided_arguments(
+                            plan_step.tool_name,
+                            _tool_schema(tool),
+                            invocation_arguments,
+                            region=self._search_log_defaults.region,
+                            topic_id=self._search_log_defaults.topic_id,
+                        )
+                    invocation_arguments = validate_tool_arguments(
+                        plan_step.tool_name, _tool_schema(tool), invocation_arguments
                     )
                     attempt_step = PlanStep(
                         plan_step.position,
@@ -454,12 +503,18 @@ class DiagnosticRuntime:
                         await emit(
                             SSE_REFERENCE_SOURCE_TYPE, {"source": _evidence_reference(record)}
                         )
+                    # 记录真实产出的安全摘要，而不是一句与结果无关的固定占位文本——
+                    # 执行结果与 Replanner 都靠它判断这一步到底拿到了什么。
+                    produced = "；".join(
+                        f"[{item.kind}] {item.summary[:120]}" for item in normalized[:3]
+                    )
+                    produced = (produced or "工具调用成功但没有产出")[:1000]
                     await self._store.call(
                         "finish_step",
                         owner,
                         step.id,
                         "succeeded",
-                        result_summary="真实工具调用成功",
+                        result_summary=produced,
                     )
                     await emit(
                         SSE_TOOL_CALL_TYPE,
@@ -467,7 +522,7 @@ class DiagnosticRuntime:
                             "toolCallId": call_id,
                             "toolName": plan_step.tool_name,
                             "lifecycle": "completed",
-                            "output": {"summary": "真实工具调用成功", "attempt": attempt},
+                            "output": {"summary": produced, "attempt": attempt},
                         },
                     )
                     state = {
@@ -475,9 +530,12 @@ class DiagnosticRuntime:
                         "next_position": state["next_position"] + 1,
                         "last_error": None,
                     }
+                    step_succeeded = True
                     break
                 except Exception as error:
-                    failure = classify_tool_failure(error, phase=phase, attempt=attempt)
+                    failure = classify_tool_failure(
+                        error, phase=phase, attempt=attempt, arguments=invocation_arguments
+                    )
                     if step is None:
                         failed_step = PlanStep(
                             plan_step.position,
@@ -526,11 +584,12 @@ class DiagnosticRuntime:
                         },
                     )
                     state = {**state, "last_error": failure.safe_message}
+                    previous_error = failure.safe_message
                     await checkpoint("executor", state)
                     if (
                         failure.category == "empty_result"
                         and is_search_log_tool(plan_step.tool_name)
-                        and attempt < 3
+                        and attempt < MAX_STEP_ATTEMPTS
                     ):
                         fallback_query = _search_log_fallback_query(task.alerts)
                         if (
@@ -541,74 +600,57 @@ class DiagnosticRuntime:
                             continue
                     if failure.route == "permanent_failure":
                         raise RuntimeError(failure.safe_message) from error
-                    if failure.route == "replan" or attempt == 3:
+                    if failure.route == "replan" or attempt == MAX_STEP_ATTEMPTS:
                         break
-                    if failure.category == "input_validation":
-                        descriptor = tool_descriptors.get(plan_step.tool_name)
-                        if descriptor is None:
-                            raise RuntimeError("工具能力描述在恢复时不可用") from error
-                        repaired = await self._model.repair_tool_arguments(
-                            context=_model_context(task.alerts, evidence),
-                            tool=descriptor,
-                            argument_keys=tuple(sorted(candidate_arguments)),
-                            validation_errors=(failure.safe_message,),
-                        )
-                        candidate_arguments = repaired.arguments
+                    # 修正后重试：把脱敏后的字段错误与当前工具的完整说明交回执行者，
+                    # 由它在下一轮重新生成参数；不需要另开一条"修参"专用路径。
                     if failure.delay:
                         await asyncio.sleep(failure.delay)
+            if not step_succeeded:
+                # 这一步尝试耗尽：如实记录失败，然后推进到下一步继续处理，
+                # 让计划完整跑完，把判断交给 Replanner。
+                state = {**state, "next_position": state["next_position"] + 1}
             await checkpoint("executor", state)
             return state
 
         async def replanner(state: DiagnosticState) -> DiagnosticState:
             await context.raise_if_cancelled()
             task = await self._store.call("get_task", owner, task_id)
-            evidence = await self._store.call("list_evidence", owner, task_id)
-            steps = await self._store.call("list_steps", owner, task_id)
             if task is None:
                 raise ValueError("诊断任务不存在")
-            if state["next_position"] >= len(task.current_plan):
-                state = {**state, "route": SSE_REPORT_TYPE}
-            else:
-                remaining = task.current_plan[state["next_position"] :]
-                decision = await self._model.replan(
-                    context=_model_context(
-                        task.alerts, evidence, plan=task.current_plan, steps=steps
-                    ),
-                    remaining_steps=remaining,
+            evidence = await self._store.call("list_evidence", owner, task_id)
+            steps = await self._store.call("list_steps", owner, task_id)
+            remaining = task.current_plan[state["next_position"] :]
+            # 本轮 replanner 只做代码级验证：依据已持久化证据与剩余步骤决定下一步，
+            # 不再调用模型、也不改写计划。换计划能力（ReplanDraft/replan/MAX_REPLANS）
+            # 保留在代码里但不触发，等"执行—验证"这条链路稳定后再评估。
+            evaluation = evaluate_claim_evidence(
+                evidence=tuple(evidence),
+                steps=tuple(steps),
+            )
+            # 路由只看进度与证据：executor 在步骤失败后同样推进进度指针，
+            # 因此"指针继续前进"本身就是有界性保证，不再需要看失败标记。
+            # `last_error` 保留给报告说明使用，不影响路由。
+            if remaining:
+                state = {**state, "route": "executor"}
+                message = (
+                    f"继续执行诊断计划（剩余 {len(remaining)} 步，"
+                    f"当前证据状态 {evaluation.trust_state}）"
                 )
-                if decision.action == SSE_REPORT_TYPE:
-                    state = {**state, "route": SSE_REPORT_TYPE}
-                elif decision.action == "replan":
-                    if task.replan_count >= MAX_REPLANS:
-                        if any(item.kind != "alert" for item in evidence):
-                            state = {**state, "route": SSE_REPORT_TYPE}
-                            await checkpoint("replanner", state)
-                            return state
-                        raise ValueError("诊断重规划次数已达到上限且没有可用证据")
-                    plan = validate_plan(
-                        PlanDraft(
-                            steps=decision.steps,
-                            requiresTemporalContext=decision.requires_temporal_context,
-                        ),
-                        tuple(tools),
-                        query_is_trusted=task.query is None,
-                    )
-                    await self._store.call(
-                        "save_plan", owner, task_id, plan, replan_count=task.replan_count + 1
-                    )
-                    state = {**state, "next_position": 0, "route": "executor"}
-                else:
-                    state = {
-                        **state,
-                        "route": SSE_REPORT_TYPE if state.get("last_error") else "executor",
-                    }
+            else:
+                state = {**state, "route": SSE_REPORT_TYPE}
+                message = (
+                    "计划执行完毕，正在生成报告"
+                    if state.get("last_error") is None
+                    else "计划已执行完毕（含失败步骤），正在按已有证据生成报告"
+                )
             progress = min(85, 20 + state["next_position"] * 10)
             await emit(
                 SSE_TASK_STATUS_TYPE,
                 {
                     "taskId": task_id,
                     "status": "running",
-                    "message": "已根据真实证据重规划" if task.replan_count else "正在执行诊断计划",
+                    "message": message,
                     "progress": progress,
                 },
             )
@@ -625,9 +667,6 @@ class DiagnosticRuntime:
             evaluation = evaluate_claim_evidence(
                 evidence=tuple(evidence),
                 steps=tuple(steps),
-                requires_temporal_context=any(
-                    is_log_context_tool(item.tool_name) for item in task.current_plan
-                ),
             )
             mode = "model"
             uncertainty = False
@@ -641,12 +680,19 @@ class DiagnosticRuntime:
                 markdown, claims, uncertainty = validate_report(
                     draft, evidence, alert_count=len(task.alerts)
                 )
-                linked_ids = {
-                    evidence_id for claim in claims for evidence_id in claim.evidence_ids
-                }
-                if not set(evaluation.supporting_evidence_ids) <= linked_ids:
-                    uncertainty = True
-            except Exception:
+                # 这里曾有一条"报告的 claims 必须引用全部支撑证据，漏一条就降级"的检查。
+                # 规格只要求"每个关键结论建立真实链接"，并没有要求穷尽引用每一条证据；
+                # 那条检查比规格更严，而且会误伤——例如重复命中的日志、与结论无关的背景
+                # 日志都无需逐条引用。实测因此把一份基于 8 条真实命中的报告降级成证据不足。
+                # 结论是否有证据支撑由 validate_report 的 claims 检查与链接存在性负责。
+            except Exception as error:
+                # 报告回退以前是静默的：任务仍然标记 succeeded，但页面只看到一份
+                # "证据不足"的兜底报告，无法判断是模型调用失败还是结构校验没过。
+                # 这里保留一条脱敏的告警日志，让回退原因可查。
+                logger.warning(
+                    "aiops report fallback",
+                    extra={"diagnosticTaskId": task_id, "reason": self._safe_message(error)},
+                )
                 markdown, evidence_ids = build_fallback_report(
                     list(task.alerts), evidence, steps
                 )
@@ -693,6 +739,32 @@ class DiagnosticRuntime:
                 state = {**state, "route": "end"}
                 await checkpoint(SSE_REPORT_TYPE, state)
                 raise AppError("SYSTEM_UNAVAILABLE")
+            if trust_state == "insufficient_evidence":
+                # 报告已经生成，但证据不足以支撑可信结论：任务不能标记成功。
+                # 用专用稳定错误码与系统故障区分，报告与已收集证据链保持可读——
+                # 失败的是"结论可信度"，不是"可观测性"。这里不抛异常：诊断流程本身
+                # 完整跑完了，结论由任务状态表达。
+                await self._store.call(
+                    "transition_task",
+                    owner,
+                    task_id,
+                    "failed",
+                    failure_code="SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+                    failure_reason="报告已生成，但证据不足，未能得出可信结论",
+                )
+                await emit(
+                    SSE_TASK_STATUS_TYPE,
+                    {
+                        "taskId": task_id,
+                        "status": "failed",
+                        "message": "证据不足，未能得出可信结论",
+                        "progress": 100,
+                        "failureCode": "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+                    },
+                )
+                state = {**state, "route": "end"}
+                await checkpoint(SSE_REPORT_TYPE, state)
+                return state
             await self._store.call("transition_task", owner, task_id, "succeeded")
             await emit(
                 SSE_TASK_STATUS_TYPE,
@@ -790,6 +862,10 @@ def _latest_query_artifact(evidence: Sequence[DiagnosticEvidenceRecord]) -> str 
     for item in reversed(evidence):
         if item.kind != "query_artifact":
             continue
+        # 只读辅助工具的产物同样以 query_artifact 落库；只有 query-builder 的产物
+        # 才是可用的查询，否则辅助结果里若恰好含 Query 字段会被误当成查询。
+        if not is_query_builder_tool(item.source):
+            continue
         query = item.metadata.get("Query", item.metadata.get("query"))
         if isinstance(query, str) and query.strip():
             return query.strip()
@@ -886,10 +962,34 @@ def _model_context(
         if any(item.kind == "knowledge" for item in evidence)
         else "未检索到 SOP"
     )
+    execution_result = (
+        build_execution_result(plan, steps, evidence) if steps else "（本轮无步骤记录）"
+    )
     return (
         f"告警：{list(alerts)}\nSOP 状态：{sop_state}\n"
         f"最终计划：{list(plan)}\n步骤摘要：{safe_steps}"
+        f"\n执行结果：{execution_result}"
         f"\n已持久化证据：\n{summarize_evidence(evidence)}"
+    )
+
+
+def _step_argument_context(
+    alerts: Sequence[dict[str, JsonValue]],
+    evidence: Sequence[DiagnosticEvidenceRecord],
+) -> str:
+    """执行者填参用的上下文：告警原文 + 前面步骤的真实完整产出。
+
+    这里刻意使用 evidence 的 `content` 而不是 `summary`：跨步参数必须原样搬运，
+    被摘要截断的值抄过去就是废的。
+    """
+    outputs = "\n".join(
+        f"- 来自「{item.source}」的产出（{item.kind}）：{item.content}"
+        for item in evidence
+        if item.kind != "alert"
+    )
+    return (
+        f"告警原文：{list(alerts)}\n"
+        f"前面步骤的真实产出：\n{outputs or '（还没有任何产出）'}"
     )
 
 

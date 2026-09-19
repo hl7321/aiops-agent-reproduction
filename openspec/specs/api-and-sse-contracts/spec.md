@@ -69,7 +69,7 @@
 - **THEN** 其共享 path 合同先声明 `BearerAuth`、`AUTH_REQUIRED` 与 `AUTH_FORBIDDEN`，再实现后端路由
 
 ### Requirement: SSE 使用共享判别联合
-共享合同 SHALL 定义以 `type` 判别的 SSE 事件联合，事件公共字段 MUST 为 `id`、`type`、`channel`、`timestamp` 和单调递增的整数 `sequence`，其中 channel 仅允许 `chat` 或 `aiops`。事件目录 MUST 包含 `content.delta`、`reasoning.delta`、`tool.call`、`reference.source`、`task.status`、`report`、`complete` 和 `error`。`task.status` 的 lifecycle MUST 仅允许 `queued|running|succeeded|failed|cancelled`，并支持 nullable 中文 message 与 0..100 nullable progress；不得为计划、步骤或重规划增加新的 SSE type。
+共享合同 SHALL 定义以 `type` 判别的 SSE 事件联合，事件公共字段 MUST 为 `id`、`type`、`channel`、`timestamp` 和单调递增的整数 `sequence`，其中 channel 仅允许 `chat` 或 `aiops`。事件目录 MUST 包含 `content.delta`、`reasoning.delta`、`tool.call`、`reference.source`、`task.status`、`report`、`complete` 和 `error`。`task.status` 的 lifecycle MUST 仅允许 `queued|running|succeeded|failed|cancelled`，并支持 nullable 中文 message 与 0..100 nullable progress；不得为计划、步骤或重规划增加新的 SSE type。`reference.source` 在 `aiops` 频道下承载诊断证据引用，其证据种类 MUST 覆盖 `DiagnosticEvidenceKind` 定义的全部种类；该种类的 TypeScript 类型与运行时校验 MUST 引用同一份种类清单，不得维护第二份手写列表。
 
 #### Scenario: 枚举全部 SSE 事件
 - **WHEN** 合同测试遍历共享 SSE 事件目录
@@ -86,6 +86,11 @@
 #### Scenario: 表达 durable task 进度
 - **WHEN** 后台诊断排队、执行、成功、失败或取消
 - **THEN** task.status 使用对应 lifecycle、可访问 message 和有界 progress，不创建 plan/step/replan 事件
+
+#### Scenario: 表达诊断证据引用
+- **WHEN** SSE 在 `aiops` 频道发送 `reference.source`，其证据种类取自诊断证据种类清单中的任意一种
+- **THEN** guard 判定该事件合法；当证据种类不在清单内时，guard MUST 拒绝该事件
+
 ### Requirement: 前端 transport 直接消费共享合同
 前端 SHALL 提供 typed HTTP、SSE 与认证 transport 基础。HTTP client MUST 解包共享 envelope，并提供 bearer token 与 request ID 的注入扩展点；SSE client MUST 正确保留跨 chunk 的未完成 frame、解析完整 frame，并返回共享 SSE 联合；authClient MUST 直接消费共享 Auth DTO、请求和响应 data。前端 MUST NOT 复制私有 envelope、Auth payload 或事件联合。
 
@@ -106,7 +111,7 @@
 - **THEN** 请求与响应直接使用共享 Auth 合同，并通过公共 ApiClient 注入 bearer token
 
 ### Requirement: 跨语言实现由合同测试约束
-后端无需导入 TypeScript，但其 Pydantic 模型、JSON 序列化、OpenAPI 路由、认证 DTO 和 SSE 形状 MUST 由合同测试证明与共享合同一致。仓库策略测试 MUST 阻止后端或前端新增临时 envelope、私有认证 payload、私有事件目录、重复事件判别联合，或缺少 bearer/401/403 的受保护 path。
+后端无需导入 TypeScript，但其 Pydantic 模型、JSON 序列化、OpenAPI 路由、认证 DTO 和 SSE 形状 MUST 由合同测试证明与共享合同一致。仓库策略测试 MUST 阻止后端或前端新增临时 envelope、私有认证 payload、私有事件目录、重复事件判别联合，或缺少 bearer/401/403 的受保护 path。合同测试 MUST 遍历诊断证据种类的全部取值，证明 `reference.source` 的 aiops 形状在 TypeScript 与后端两侧同时成立。
 
 #### Scenario: 比较后端与共享合同
 - **WHEN** 运行后端和仓库合同测试
@@ -119,6 +124,10 @@
 #### Scenario: 检测不完整受保护 path
 - **WHEN** 机器可读目录中的 path 使用 bearer 但缺少共享 401 或 403
 - **THEN** 合同测试失败并指出该 path
+
+#### Scenario: 遍历诊断证据种类
+- **WHEN** 合同测试为诊断证据种类的每一个取值构造 `reference.source` 事件
+- **THEN** 每个取值都通过共享合同校验，且后端生成的证据引用形状与共享合同一致
 
 ### Requirement: 共享合同登记后台任务管理边界
 共享合同 SHALL 定义 BackgroundJob、BackgroundJobEvent、任务状态与取消/重试响应类型，并在机器可读 OpenAPI 目录登记 `GET /background-jobs`、`GET /background-jobs/{id}`、`POST /background-jobs/{id}:cancel` 和 `POST /background-jobs/{id}:retry`。四个 path MUST 使用 `BearerAuth` 并复用 `AUTH_REQUIRED`、`AUTH_FORBIDDEN` 与 `BUSINESS_RESOURCE_NOT_FOUND`。
@@ -301,23 +310,46 @@
 - **THEN** API 返回 code、system category、503、安全 message 与 requestId，不返回私有错误 payload
 
 ### Requirement: 共享合同登记 AIOps 诊断与证据链
+
 共享 contracts SHALL 定义 DiagnosticTask、DiagnosticStep、DiagnosticEvidence、DiagnosticReport、ReportEvidenceLink、EvidenceChain、创建/列表/详情/stream 输入输出及 `accepted|running|succeeded|failed|cancelled` 诊断状态。创建请求 MUST 保持 `query` 与有界 `alerts` 字段，并要求两者至少提供一项；未选择告警时可用非空 query 和空 alerts 创建手工诊断，不得增加独立 context 字段。机器可读 OpenAPI SHALL 登记 `POST /aiops/diagnostics`、`GET /aiops/diagnostics`、`GET /aiops/diagnostics/{id}`、`GET /aiops/diagnostics/{id}/evidence-chain` 与 `POST /aiops/diagnostics/{id}:stream`；全部使用 BearerAuth、共享 envelope/requestId、401/403/404，创建和 stream 按需登记 validation/system 错误。创建 data MUST 同时包含 diagnostic task 和 BackgroundJob。
 
+**诊断终态 MUST 表达报告可信度，而不是"报告已生成"。** 契约 MUST 使客户端能区分以下三种收尾：
+
+- 报告信任状态为 `verified_evidence` → 任务 `succeeded`。
+- 报告信任状态为 `insufficient_evidence` → 任务 MUST NOT 为 `succeeded`；MUST 以共享错误目录中表达"证据不足、无法给出可信结论"的稳定错误码收尾，使任务落到 `failed` 且 `failureCode` 可区分于系统故障。
+- 报告信任状态为 `execution_failed` → 任务 `failed`。
+
+该"证据不足"错误码 MUST 与其他 AIOps 系统错误一样进入共享错误目录，声明唯一 code、category、HTTP status 与不含内部细节的安全默认消息；契约两端的状态与错误码枚举 MUST 保持一致，前端据此把"诊断成功"与"未能得出结论"展示为不同结果。
+
 #### Scenario: 合同消费者读取诊断 DTO
+
 - **WHEN** TypeScript 或 Pydantic 消费诊断详情和证据链
 - **THEN** 两端对状态、告警输入、步骤、证据、报告、provenance、nullable 字段和 backgroundJob 形状一致
 
 #### Scenario: 手工 query 不选择告警
+
 - **WHEN** 已认证用户提交非空 query 和空 alerts
 - **THEN** 合同接受请求且不要求不存在的 context 字段
 
 #### Scenario: 创建输入完全为空
+
 - **WHEN** query 为空白且 alerts 为空
 - **THEN** 合同返回共享 validation 错误且不创建诊断
 
 #### Scenario: OpenAPI 登记五个诊断 path
+
 - **WHEN** 合同测试遍历 AIOps diagnostic operations
 - **THEN** 五个 path 具有稳定 method、operationId、成功数据、BearerAuth 和共享错误列表，且不存在诊断专用 cancel/retry path
+
+#### Scenario: 证据不足的诊断不被当作成功
+
+- **WHEN** 诊断生成了报告但报告信任状态为 insufficient_evidence
+- **THEN** 任务终态不是 succeeded，`failureCode` 为该稳定错误码，且报告中仍保留已收集到的真实证据链
+
+#### Scenario: 两种失败可区分
+
+- **WHEN** 客户端读取一个 failed 诊断
+- **THEN** 它能凭 `failureCode` 区分"系统执行失败"与"证据不足未能得出结论"，两者不共用同一个 code
 
 ### Requirement: SearchLog 缺失使用稳定系统错误
 稳定错误目录 SHALL 增加 `SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE`，category 为 system、HTTP status 为 503，并提供不包含 MCP URL、connection、tool 列表或凭据的安全默认消息。Pydantic、TypeScript、background job failure 与 SSE error MUST 复用同一定义。
@@ -366,3 +398,4 @@
 #### Scenario: 前后端序列化部分不可用
 - **WHEN** readiness 或 config check 包含一个 unavailable 依赖
 - **THEN** TypeScript 与 Pydantic 形状对齐 status、latencyMs、safe error 和 overall 503 语义
+

@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
+from sqlalchemy import update
 
 from super_ai.aiops.cases.service import DiagnosisCasePersistor
 from super_ai.aiops.models import NewEvidence
@@ -10,6 +11,7 @@ from super_ai.app import create_app
 from super_ai.background_jobs.runtime import WorkerSettings
 from super_ai.feedback.models import FeedbackUpsert
 from super_ai.memory.config import DatabaseSettings
+from super_ai.memory.extended_sqlite.diagnostic_models import DiagnosticReportModel
 from super_ai.memory.extended_sqlite.diagnostic_repositories import SqliteDiagnosticRepository
 from super_ai.memory.extended_sqlite.feedback_repositories import SqliteFeedbackRepository
 from super_ai.memory.sqlite import PersistenceRuntime, transaction_scope, upgrade_database
@@ -149,3 +151,42 @@ async def test_promotion_api_is_owner_scoped_and_idempotent(tmp_path: Path) -> N
     assert repeated.json()["data"]["status"] == "existing"
     assert repeated.json()["data"]["item"]["id"] == promoted.json()["data"]["item"]["id"]
     assert forbidden.status_code == 404
+
+
+async def _downgrade_report_trust(runtime: PersistenceRuntime, report_id: str) -> None:
+    """把来源报告的可信状态改回 insufficient，模拟旧行为留下的历史案例行。"""
+    async with transaction_scope(runtime.session_factory) as session:
+        await session.execute(
+            update(DiagnosticReportModel)
+            .where(DiagnosticReportModel.id == report_id)
+            .values(trust_state="insufficient_evidence")
+        )
+
+
+async def test_case_list_hides_cases_whose_source_report_is_not_verified(tmp_path: Path) -> None:
+    """案例库只列出来源报告可信的案例，但历史数据仍然可追溯。
+
+    旧行为会为"证据不足"的兜底报告也建案例（该行为已修正）。这些历史行不该继续
+    出现在案例库里当经验复用，但也不能被悄悄删掉——单条详情仍然读得到。
+    """
+    async with _client(tmp_path / "case-trust.sqlite3") as (client, runtime):
+        owner, token = await _auth(client, "owner@example.com")
+        verified_task, verified_report = await _successful_report(runtime, owner)
+        verified = await DiagnosisCasePersistor(runtime.session_factory).persist(
+            owner, verified_task, verified_report
+        )
+        legacy_task, legacy_report = await _successful_report(runtime, owner)
+        legacy = await DiagnosisCasePersistor(runtime.session_factory).persist(
+            owner, legacy_task, legacy_report
+        )
+        await _downgrade_report_trust(runtime, legacy_report)
+        headers = {"Authorization": f"Bearer {token}"}
+
+        listed = await client.get("/aiops/diagnostic-cases", headers=headers)
+        legacy_detail = await client.get(
+            f"/aiops/diagnostic-cases/{legacy.id}", headers=headers
+        )
+
+    assert [item["id"] for item in listed.json()["data"]["items"]] == [verified.id]
+    assert legacy_detail.status_code == 200
+    assert legacy_detail.json()["data"]["item"]["id"] == legacy.id

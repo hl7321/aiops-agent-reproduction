@@ -1,4 +1,6 @@
+import re
 from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -7,16 +9,24 @@ from langchain_core.tools import BaseTool, tool
 
 from super_ai.agent_audit.service import AgentToolAuditService
 from super_ai.aiops.cases.service import DiagnosisCasePersistor
-from super_ai.aiops.models import PlanStep
+from super_ai.aiops.models import (
+    DiagnosticEvidenceRecord,
+    DiagnosticStepRecord,
+    DiagnosticStepStatus,
+    DiagnosticTaskRecord,
+    PlanStep,
+    ToolErrorCategory,
+)
 from super_ai.aiops.planning import (
     PlanDraft,
     PlanStepDraft,
     ReplanDraft,
+    ReportClaimDraft,
     ReportDraft,
     SearchLogQueryDefaults,
-    ToolArgumentRepairDraft,
+    StepArgumentsDraft,
 )
-from super_ai.aiops.runtime import DiagnosticRuntime
+from super_ai.aiops.runtime import DiagnosticRuntime, build_execution_result
 from super_ai.aiops.tool_policy import ToolCapabilityDescriptor
 from super_ai.api_contracts import KnowledgeRetrievalToolInput, KnowledgeRetrievalToolOutput
 from super_ai.api_responses import AppError
@@ -37,6 +47,37 @@ from super_ai.memory.primitives import utc_now
 from super_ai.memory.sqlite import PersistenceRuntime, transaction_scope, upgrade_database
 from super_ai.project_config import JsonValue
 from super_ai.tenancy.context import CurrentUser
+
+# 新契约下模型必须自己给出合法的毫秒时间窗：默认值填充与单位换算都已删除，
+# 因此测试替身也要像"看得见完整参数说明的模型"那样把参数填全。
+VALID_TIME_WINDOW: dict[str, int] = {"From": 1_787_479_000_000, "To": 1_787_480_100_000}
+
+# 恢复类用例直接写入历史计划，参数同样要满足新契约（完整键名 + 毫秒时间窗）。
+PLAN_ARGS: dict[str, JsonValue] = {"Query": "error", **VALID_TIME_WINDOW}
+
+
+def _query_builder_step(purpose: str = "生成检索语句") -> PlanStepDraft:
+    return PlanStepDraft(toolName="TextToSearchLogQuery", purpose=purpose)
+
+
+def _search_step(purpose: str = "查询告警日志") -> PlanStepDraft:
+    return PlanStepDraft(toolName="SearchLog", purpose=purpose)
+
+
+def _fake_query_builder_tool(
+    sink: list[dict[str, object]] | None = None,
+    query: str = 'service:"checkout"',
+) -> BaseTool:
+    """测试用的 query-builder：把自然语言意图翻译成一段固定 CQL。"""
+
+    @tool("TextToSearchLogQuery")
+    async def text_to_search_log_query(Text: str, Region: str, TopicId: str = "") -> object:
+        """把自然语言检索意图翻译成 CLS 检索语句。"""
+        if sink is not None:
+            sink.append({"Text": Text, "Region": Region, "TopicId": TopicId})
+        return {"structuredContent": {"Query": query}}
+
+    return text_to_search_log_query
 
 
 class FakeKnowledge:
@@ -100,7 +141,8 @@ class FakeResolver:
                 ]
             }
 
-        return (search_log,)
+        # 先试精确条件，查不到再由执行者按告警标签扩宽。
+        return (_fake_query_builder_tool(), search_log)
 
 
 class FakeModel:
@@ -113,24 +155,31 @@ class FakeModel:
     ) -> PlanDraft:
         assert "HighError" in context
         assert not validation_errors
-        assert tuple(item.name for item in tool_catalog) == ("knowledge_retrieval", "SearchLog")
+        assert tuple(item.name for item in tool_catalog) == (
+            "knowledge_retrieval",
+            "TextToSearchLogQuery",
+            "SearchLog",
+        )
         return PlanDraft(
             steps=[
-                PlanStepDraft(
-                    toolName="SearchLog", purpose="查询告警日志", arguments={"query": "error"}
-                )
+                _query_builder_step(),
+                _search_step(),
             ]
         )
 
-    async def repair_tool_arguments(
+    async def fill_step_arguments(
         self,
         *,
         context: str,
         tool: ToolCapabilityDescriptor,
-        argument_keys: Sequence[str],
-        validation_errors: Sequence[str],
-    ) -> ToolArgumentRepairDraft:
-        raise AssertionError("有效测试参数不应进入纠错")
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft:
+        assert context and plan and tool.name == step.tool_name
+        if tool.name == "TextToSearchLogQuery":
+            return StepArgumentsDraft(arguments={"Text": "查询告警日志"})
+        return StepArgumentsDraft(arguments=dict(VALID_TIME_WINDOW))
 
     async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft:
         assert context and not remaining_steps
@@ -159,6 +208,7 @@ class ReportOnFailureModel(FakeModel):
 class RepairingModel(FakeModel):
     def __init__(self) -> None:
         self.validation_errors: tuple[str, ...] = ()
+        self.search_fills = 0
 
     async def plan(
         self,
@@ -168,25 +218,28 @@ class RepairingModel(FakeModel):
         validation_errors: Sequence[str] = (),
     ) -> PlanDraft:
         assert context and tool_catalog and not validation_errors
-        return PlanDraft(
-            steps=[
-                PlanStepDraft(
-                    toolName="SearchLog", purpose="查询告警日志", arguments={"Query": ""}
-                )
-            ]
-        )
+        return PlanDraft(steps=[_query_builder_step(), _search_step()])
 
-    async def repair_tool_arguments(
+    async def fill_step_arguments(
         self,
         *,
         context: str,
         tool: ToolCapabilityDescriptor,
-        argument_keys: Sequence[str],
-        validation_errors: Sequence[str],
-    ) -> ToolArgumentRepairDraft:
-        assert context and tool.name == "SearchLog" and "Query" in argument_keys
-        self.validation_errors = tuple(validation_errors)
-        return ToolArgumentRepairDraft(arguments={"Query": "error"})
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft:
+        assert context and plan and tool.name == step.tool_name
+        if tool.name == "TextToSearchLogQuery":
+            return StepArgumentsDraft(arguments={"Text": "查询告警日志"})
+        self.search_fills += 1
+        if self.search_fills == 1:
+            # 首次给出类型错误的时间窗：校验不再静默换算，错误会带着字段路径回到执行者。
+            return StepArgumentsDraft(
+                arguments={"From": "not-a-number", "To": VALID_TIME_WINDOW["To"]}
+            )
+        self.validation_errors = (previous_error or "",)
+        return StepArgumentsDraft(arguments=dict(VALID_TIME_WINDOW))
 
 
 class EmptyThenCorrelatedResolver(FakeResolver):
@@ -219,7 +272,13 @@ class EmptyThenCorrelatedResolver(FakeResolver):
                 ]
             }
 
-        return (search_log,)
+        # 先试精确条件，查不到再由执行者按告警标签扩宽。
+        return (
+            _fake_query_builder_tool(
+                query='trace_id:"trace-1" AND exception:"short-name"'
+            ),
+            search_log,
+        )
 
 
 class SpecificSearchModel(FakeModel):
@@ -231,15 +290,7 @@ class SpecificSearchModel(FakeModel):
         validation_errors: Sequence[str] = (),
     ) -> PlanDraft:
         assert context and tool_catalog and not validation_errors
-        return PlanDraft(
-            steps=[
-                PlanStepDraft(
-                    toolName="SearchLog",
-                    purpose="先尝试精确条件",
-                    arguments={"Query": 'trace_id:"trace-1" AND exception:"short-name"'},
-                )
-            ]
-        )
+        return PlanDraft(steps=[_query_builder_step(), _search_step("先尝试精确条件")])
 
 
 class NeverCalledModel(FakeModel):
@@ -303,9 +354,10 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
         assert order == ["knowledge", "mcp"]
         assert resolver.arguments == [
             {
-                "From": 1_787_476_500_000,
+                "From": 1_787_479_000_000,
                 "To": 1_787_480_100_000,
-                "Query": "error",
+                # Query 由执行者从 query-builder 的真实产出确定性绑定，不是模型复述。
+                "Query": 'service:"checkout"',
                 "Region": "ap-guangzhou",
                 "TopicId": "topic-real",
             }
@@ -321,12 +373,18 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
                 "owner", job.id, after_sequence=0
             )
             cases = await DiagnosisCasePersistor(runtime.session_factory).list("owner")
-        assert saved is not None and saved.status == "succeeded"
-        assert [item.kind for item in evidence] == ["log_hit"]
+        # 报告生成了，但证据不足：任务终态必须表达"未能得出可信结论"，
+        # 而不是因为"报告已生成"就标记成功。
+        assert saved is not None
+        assert saved.status == "failed"
+        assert saved.failure_code == "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE"
+        assert saved.failure_reason is not None and "证据不足" in saved.failure_reason
+        # 查询步骤产出中间产物，日志检索产出的才是证据。
+        assert [item.kind for item in evidence] == ["query_artifact", "log_hit"]
         assert report is not None and report.generation_mode == "fallback"
         assert report.uncertainty is True and "证据不足" in report.markdown
         assert report.trust_state == "insufficient_evidence"
-        assert [item.evidence_id for item in links] == [evidence[0].id]
+        assert [item.evidence_id for item in links] == [item.id for item in evidence]
         assert checkpoint is not None and checkpoint.node == "report"
         assert events is not None
         assert cases == []
@@ -382,16 +440,139 @@ async def test_executor_repairs_pydantic_input_and_audits_both_attempts(
                 "owner", task.id
             )
 
-        assert [(item.attempt, item.status, item.error_category) for item in steps] == [
-            (1, "failed", "input_validation"),
-            (2, "succeeded", None),
+        assert [
+            (item.position, item.attempt, item.status, item.error_category)
+            for item in steps
+        ] == [
+            # 第 0 步生成查询，第 1 步日志检索：首次参数不合法，修正后第二次成功。
+            (0, 1, "succeeded", None),
+            (1, 1, "failed", "input_validation"),
+            (1, 2, "succeeded", None),
         ]
         assert [item.status for item in audits if item.tool_name == "SearchLog"] == [
             "failed",
             "completed",
         ]
-        assert model.validation_errors and "Query" in model.validation_errors[0]
+        assert model.validation_errors and "From" in model.validation_errors[0]
         assert "input_value" not in model.validation_errors[0]
+    finally:
+        await runtime.close()
+
+
+class FailingSearchModel:
+    """排一个含日志检索的计划，达到尝试上限后停止并出报告。"""
+
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        return PlanDraft(steps=[_query_builder_step(), _search_step()])
+
+    async def fill_step_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft:
+        assert context and plan and tool.name == step.tool_name
+        if tool.name == "TextToSearchLogQuery":
+            return StepArgumentsDraft(arguments={"Text": "查询告警日志"})
+        return StepArgumentsDraft(arguments=dict(VALID_TIME_WINDOW))
+
+    async def replan(self, *, context: str, remaining_steps: Sequence[PlanStep]) -> ReplanDraft:
+        return ReplanDraft(action="report", reason="达到尝试上限后停止")
+
+    async def report(self, *, context: str) -> ReportDraft:
+        raise RuntimeError("报告失败以走诚实兜底")
+
+
+class FailingSearchResolver:
+    """模拟 MCP 工具返回带敏感上下文的执行错误。"""
+
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id
+        assert builtin_tool_names == frozenset({"knowledge_retrieval"})
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float,
+            To: float,
+            Query: str,
+            Region: str,
+            TopicId: str = "",
+        ) -> object:
+            """查询真实测试边界日志。"""
+            raise RuntimeError(
+                "[TencentCloudSDKException]message:SyntaxError [field: nservice, "
+                f"can not search on this field] region:{Region} topicId:{TopicId}"
+            )
+
+        return (_fake_query_builder_tool(), search_log)
+
+
+async def test_failed_search_step_persists_readable_redacted_reason(tmp_path: Path) -> None:
+    url = f"sqlite+aiosqlite:///{tmp_path / 'readable-failure.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            task = await SqliteDiagnosticRepository(session).create_task(
+                "owner", None, [{"alertName": "HighError"}]
+            )
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            FailingSearchResolver(),
+            FailingSearchModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        # 查日志这一步是"真的执行失败"，报告节点会以 SYSTEM_UNAVAILABLE 收尾；
+        # 步骤与失败摘要在此之前已经落库，因此断言不受影响。
+        with pytest.raises(AppError):
+            await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            steps = await SqliteDiagnosticRepository(session).list_steps("owner", task.id)
+
+        failed = [item for item in steps if item.status == "failed"]
+        # 每个步骤最多两次尝试：达到上限后不再重试。
+        assert len(failed) == 2
+        assert {item.attempt for item in failed} == {1, 2}
+        message = failed[0].error_message or ""
+        # 服务端原因可见
+        assert "SyntaxError" in message
+        assert "nservice" in message
+        # 敏感参数取值不可见
+        assert "ap-guangzhou" not in message
+        assert "topic-real" not in message
     finally:
         await runtime.close()
 
@@ -449,8 +630,12 @@ async def test_empty_search_widens_to_owner_alert_correlation_identifier(
             'trace_id:"trace-1" AND exception:"short-name"',
             'incident_id:"incident-1"',
         ]
-        assert [item.status for item in steps] == ["failed", "succeeded"]
-        assert [item.kind for item in evidence] == ["log_hit"]
+        assert [(item.position, item.attempt, item.status) for item in steps] == [
+            (0, 1, "succeeded"),
+            (1, 1, "failed"),
+            (1, 2, "succeeded"),
+        ]
+        assert [item.kind for item in evidence] == ["query_artifact", "log_hit"]
     finally:
         await runtime.close()
 
@@ -589,7 +774,10 @@ async def test_restore_ignores_checkpoint_from_previous_plan_version(tmp_path: P
             task = await repository.save_plan(
                 "owner",
                 task.id,
-                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                (
+                    PlanStep(0, "TextToSearchLogQuery", "生成检索语句", {}),
+                    PlanStep(1, "SearchLog", "查询真实日志", {}),
+                ),
                 replan_count=0,
             )
             assert task is not None and task.plan_version == 1
@@ -621,7 +809,8 @@ async def test_restore_ignores_checkpoint_from_previous_plan_version(tmp_path: P
         async with transaction_scope(runtime.session_factory) as session:
             steps = await SqliteDiagnosticRepository(session).list_steps("owner", task.id)
         assert [(step.plan_version, step.position, step.status) for step in steps] == [
-            (1, 0, "succeeded")
+            (1, 0, "succeeded"),
+            (1, 1, "succeeded"),
         ]
     finally:
         await runtime.close()
@@ -650,12 +839,15 @@ async def test_restore_continues_attempt_sequence_without_reusing_attempt_one(
             task = await repository.save_plan(
                 "owner",
                 task.id,
-                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                (
+                    PlanStep(0, "TextToSearchLogQuery", "生成检索语句", {}),
+                    PlanStep(1, "SearchLog", "查询真实日志", {}),
+                ),
                 replan_count=0,
             )
             assert task is not None
             first = await repository.start_step(
-                "owner", task.id, task.plan_version, task.current_plan[0], attempt=1
+                "owner", task.id, task.plan_version, task.current_plan[1], attempt=1
             )
             await repository.finish_step(
                 "owner",
@@ -686,7 +878,9 @@ async def test_restore_continues_attempt_sequence_without_reusing_attempt_one(
         async with transaction_scope(runtime.session_factory) as session:
             steps = await SqliteDiagnosticRepository(session).list_steps("owner", task.id)
 
-        assert [(step.attempt, step.status) for step in steps] == [
+        # 第 0 步生成查询先跑完；第 1 步沿用已落库的 attempt 1 失败记录，从 attempt 2 继续。
+        search_steps = [step for step in steps if step.position == 1]
+        assert [(step.attempt, step.status) for step in search_steps] == [
             (1, "failed"),
             (2, "succeeded"),
         ]
@@ -717,7 +911,7 @@ async def test_exhausted_required_search_attempts_persist_failed_explanation(
             task = await repository.save_plan(
                 "owner",
                 task.id,
-                (PlanStep(0, "SearchLog", "查询真实日志", {"query": "error"}),),
+                (PlanStep(0, "SearchLog", "查询真实日志", PLAN_ARGS),),
                 replan_count=0,
             )
             assert task is not None
@@ -761,5 +955,524 @@ async def test_exhausted_required_search_attempts_persist_failed_explanation(
         assert saved is not None and saved.status == "failed"
         assert report is not None and report.trust_state == "execution_failed"
         assert report.uncertainty is True
+    finally:
+        await runtime.close()
+
+
+def test_execution_result_carries_real_detail_and_redacts_sensitive_arguments() -> None:
+    """执行结果由代码组装：真实参数、尝试次数、失败类别、产出，且不含敏感取值。"""
+    now = utc_now()
+    plan = (
+        PlanStep(0, "TextToSearchLogQuery", "生成检索语句", {}),
+        PlanStep(1, "SearchLog", "查询真实日志", {}),
+    )
+
+    def _step(
+        step_id: str,
+        position: int,
+        attempt: int,
+        tool_name: str,
+        status: str,
+        *,
+        arguments: dict[str, JsonValue] | None = None,
+        result_summary: str | None = None,
+        error_message: str | None = None,
+        error_category: str | None = None,
+    ) -> DiagnosticStepRecord:
+        return DiagnosticStepRecord(
+            id=step_id,
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            plan_version=1,
+            position=position,
+            attempt=attempt,
+            tool_name=tool_name,
+            arguments=arguments or {},
+            status=cast("DiagnosticStepStatus", status),
+            result_summary=result_summary,
+            error_message=error_message,
+            started_at=now,
+            completed_at=now,
+            created_at=now,
+            error_category=cast("ToolErrorCategory | None", error_category),
+        )
+
+    steps = (
+        _step(
+            "step-0",
+            0,
+            1,
+            "TextToSearchLogQuery",
+            "succeeded",
+            arguments={"Text": "查询支付超时", "Region": "ap-guangzhou", "TopicId": "topic-real"},
+            result_summary='[query_artifact] Query=service:"checkout"',
+        ),
+        _step(
+            "step-1a",
+            1,
+            1,
+            "SearchLog",
+            "failed",
+            arguments={"From": 1, "To": 2, "Region": "ap-guangzhou", "TopicId": "topic-real"},
+            error_message="input_validation: fields=From:int_parsing",
+            error_category="input_validation",
+        ),
+        _step(
+            "step-1b",
+            1,
+            2,
+            "SearchLog",
+            "succeeded",
+            arguments={"From": 1, "To": 2, "Region": "ap-guangzhou", "TopicId": "topic-real"},
+            result_summary="[log_hit] 支付网关超时",
+        ),
+    )
+    evidence = (
+        DiagnosticEvidenceRecord(
+            id="evidence-1",
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            diagnostic_step_id="step-1b",
+            tool_call_id="call-1",
+            kind="log_hit",
+            source="SearchLog",
+            title="SearchLog 结果 1",
+            summary="支付网关超时",
+            content="支付网关超时",
+            metadata={},
+            observed_at=now,
+            created_at=now,
+        ),
+    )
+
+    result = build_execution_result(plan, steps, evidence)
+
+    entries = cast(list[dict[str, JsonValue]], result["plan"])
+    assert [item["status"] for item in entries] == ["succeeded", "succeeded"]
+    assert entries[1]["resultSummary"] == "[log_hit] 支付网关超时"
+    attempts = cast(list[dict[str, JsonValue]], entries[1]["attempts"])
+    assert [(item["attempt"], item["status"]) for item in attempts] == [
+        (1, "failed"),
+        (2, "succeeded"),
+    ]
+    # 失败类别说明"重试有没有用"
+    assert attempts[0]["failureClass"] == "repair"
+    assert attempts[0]["errorCategory"] == "input_validation"
+    # 参数只给键名，不给取值：Region/TopicId 的值不离开后端
+    assert attempts[0]["argumentKeys"] == ["From", "Region", "To", "TopicId"]
+    assert "arguments" not in attempts[0]
+    assert "ap-guangzhou" not in str(result)
+    assert "topic-real" not in str(result)
+    # 产出与来源步骤可追溯
+    produced = cast(list[dict[str, JsonValue]], entries[1]["producedEvidence"])
+    assert [item["evidenceId"] for item in produced] == ["evidence-1"]
+    assert result["evidenceByKind"] == {"log_hit": 1}
+
+
+def test_execution_result_slices_stage_durations_from_real_timestamps() -> None:
+    """阶段耗时按真实时间戳切：受理 / 规划 / 执行 / 报告，缺时间戳的阶段留空不编造。"""
+    created = datetime(2026, 9, 19, 10, 0, 0, tzinfo=timezone.utc)
+    started = created + timedelta(milliseconds=120)
+    first_step = started + timedelta(seconds=3)
+    last_step_done = first_step + timedelta(seconds=7)
+    completed = last_step_done + timedelta(seconds=2)
+
+    def _step(
+        step_id: str, position: int, begun: datetime, ended: datetime
+    ) -> DiagnosticStepRecord:
+        return DiagnosticStepRecord(
+            id=step_id,
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            plan_version=1,
+            position=position,
+            attempt=1,
+            tool_name="SearchLog",
+            arguments={"Query": "checkout"},
+            status="succeeded",
+            result_summary="[log_hit] 命中",
+            error_message=None,
+            started_at=begun,
+            completed_at=ended,
+            created_at=begun,
+            error_category=None,
+        )
+
+    task = DiagnosticTaskRecord(
+        id="task",
+        owner_user_id="owner",
+        status="succeeded",
+        query="排查延迟",
+        alerts=(),
+        current_plan=(
+            PlanStep(0, "TextToSearchLogQuery", "生成检索语句", {}),
+            PlanStep(1, "SearchLog", "查询真实日志", {}),
+        ),
+        plan_version=1,
+        replan_count=0,
+        failure_code=None,
+        failure_reason=None,
+        created_at=created,
+        updated_at=completed,
+        started_at=started,
+        completed_at=completed,
+    )
+    steps = (
+        _step("step-0", 0, first_step, first_step + timedelta(seconds=3)),
+        _step("step-1", 1, first_step + timedelta(seconds=1), last_step_done),
+    )
+
+    result = build_execution_result(task.current_plan, steps, (), task=task)
+
+    stages = cast(list[dict[str, JsonValue]], result["stages"])
+    assert [(item["name"], item["durationMs"]) for item in stages] == [
+        ("受理", 120),
+        ("规划", 3000),
+        ("执行", 7000),
+        ("报告", 2000),
+    ]
+    assert result["durationMs"] == 12120
+    assert result["startedAt"] == "2026-09-19T10:00:00.120000Z"
+    # 步骤级耗时是"首次开始到最后一次结束"，重试等待时间也算在内。
+    entries = cast(list[dict[str, JsonValue]], result["plan"])
+    assert entries[1]["durationMs"] == 6000
+
+
+def test_execution_result_leaves_unfinished_stages_empty() -> None:
+    """任务还在跑：没有完成时间的阶段必须是 null，不能填 0 假装已经结束。"""
+    created = datetime(2026, 9, 19, 10, 0, 0, tzinfo=timezone.utc)
+    started = created + timedelta(milliseconds=100)
+    running = started + timedelta(seconds=2)
+    task = DiagnosticTaskRecord(
+        id="task",
+        owner_user_id="owner",
+        status="running",
+        query=None,
+        alerts=(),
+        current_plan=(PlanStep(0, "SearchLog", "查询真实日志", {}),),
+        plan_version=1,
+        replan_count=0,
+        failure_code=None,
+        failure_reason=None,
+        created_at=created,
+        updated_at=running,
+        started_at=started,
+        completed_at=None,
+    )
+    steps = (
+        DiagnosticStepRecord(
+            id="step-0",
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            plan_version=1,
+            position=0,
+            attempt=1,
+            tool_name="SearchLog",
+            arguments={"Query": "checkout"},
+            status="running",
+            result_summary=None,
+            error_message=None,
+            started_at=running,
+            completed_at=None,
+            created_at=running,
+            error_category=None,
+        ),
+    )
+
+    result = build_execution_result(task.current_plan, steps, (), task=task)
+
+    assert result["durationMs"] is None
+    assert result["completedAt"] is None
+    stages = cast(list[dict[str, JsonValue]], result["stages"])
+    assert [item["durationMs"] for item in stages] == [100, 2000, None, None]
+    entries = cast(list[dict[str, JsonValue]], result["plan"])
+    # 正在跑的步骤：状态 running、完成时间与耗时都是空，前端据此改用本地秒表。
+    assert entries[0]["status"] == "running"
+    assert entries[0]["completedAt"] is None
+    assert entries[0]["durationMs"] is None
+    assert entries[0]["startedAt"] == "2026-09-19T10:00:02.100000Z"
+
+
+class PlanCompletionResolver:
+    """提供生成查询、永远查不到日志的 SearchLog、以及可成功的只读辅助工具。"""
+
+    def __init__(self) -> None:
+        self.order: list[str] = []
+
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id and builtin_tool_names == frozenset({"knowledge_retrieval"})
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float, To: float, Query: str, Region: str, TopicId: str = ""
+        ) -> object:
+            """查询真实测试边界日志。"""
+            self.order.append("search")
+            return {"structuredContent": []}
+
+        @tool("DescribeLogHistogram")
+        async def describe_log_histogram(Query: str) -> object:
+            """查询日志量分布。"""
+            self.order.append("histogram")
+            return {"structuredContent": {"TotalCount": 3}}
+
+        return (_fake_query_builder_tool(), search_log, describe_log_histogram)
+
+
+class PlanCompletionModel(FakeModel):
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        assert context and not validation_errors
+        return PlanDraft(
+            steps=[
+                _query_builder_step(),
+                _search_step("查询告警日志"),
+                PlanStepDraft(toolName="DescribeLogHistogram", purpose="查看日志量分布"),
+            ]
+        )
+
+    async def fill_step_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft:
+        assert context and plan and tool.name == step.tool_name
+        if tool.name == "TextToSearchLogQuery":
+            return StepArgumentsDraft(arguments={"Text": "查询告警日志"})
+        if tool.name == "DescribeLogHistogram":
+            return StepArgumentsDraft(arguments={"Query": "*"})
+        return StepArgumentsDraft(arguments=dict(VALID_TIME_WINDOW))
+
+
+async def test_failed_step_does_not_stop_the_remaining_plan(tmp_path: Path) -> None:
+    """某一步失败后其余步骤仍要执行，计划跑完才交给 Replanner。"""
+    url = f"sqlite+aiosqlite:///{tmp_path / 'plan-completion.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        resolver = PlanCompletionResolver()
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            resolver,
+            PlanCompletionModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            steps = await SqliteDiagnosticRepository(session).list_steps("owner", task.id)
+
+        # 第 1 步（日志检索）失败，但第 2 步（指标查询）仍然执行。
+        assert [(item.position, item.status) for item in steps] == [
+            (0, "succeeded"),
+            (1, "failed"),
+            (2, "succeeded"),
+        ]
+        assert resolver.order == ["search", "histogram"]
+    finally:
+        await runtime.close()
+
+
+def test_execution_result_covers_every_step_when_all_fail() -> None:
+    """全部步骤失败且没有任何证据时，执行结果仍覆盖计划的每一步。"""
+    now = utc_now()
+    plan = (
+        PlanStep(0, "TextToSearchLogQuery", "生成检索语句", {}),
+        PlanStep(1, "SearchLog", "查询真实日志", {}),
+        PlanStep(2, "QueryMetric", "查询指标趋势", {}),
+    )
+
+    def _failed(step_id: str, position: int, tool_name: str) -> DiagnosticStepRecord:
+        return DiagnosticStepRecord(
+            id=step_id,
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            plan_version=1,
+            position=position,
+            attempt=1,
+            tool_name=tool_name,
+            arguments={},
+            status="failed",
+            result_summary=None,
+            error_message="transport: 连接中断",
+            started_at=now,
+            completed_at=now,
+            created_at=now,
+            error_category="transport",
+        )
+
+    steps = (
+        _failed("step-0", 0, "TextToSearchLogQuery"),
+        _failed("step-1", 1, "SearchLog"),
+        _failed("step-2", 2, "QueryMetric"),
+    )
+
+    result = build_execution_result(plan, steps, ())
+
+    entries = cast(list[dict[str, JsonValue]], result["plan"])
+    assert [item["position"] for item in entries] == [0, 1, 2]
+    assert [item["status"] for item in entries] == ["failed", "failed", "failed"]
+    assert all(item["producedEvidence"] == [] for item in entries)
+    assert result["evidenceByKind"] == {}
+
+
+class VerifiedEvidenceResolver(FakeResolver):
+    """日志检索返回两条命中，足以满足非时序证据规则。"""
+
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id and builtin_tool_names == frozenset({"knowledge_retrieval"})
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float, To: float, Query: str, Region: str, TopicId: str = ""
+        ) -> object:
+            """查询真实测试边界日志。"""
+            self.arguments.append({"Query": Query})
+            return {
+                "structuredContent": [
+                    {
+                        "Time": int(To) - 1000,
+                        "PkgId": "",
+                        "PkgLogId": "",
+                        "LogJson": '{"context_sequence":"1","message":"基线"}',
+                    },
+                    {
+                        "Time": int(To),
+                        "PkgId": "",
+                        "PkgLogId": "",
+                        "LogJson": '{"context_sequence":"2","message":"异常"}',
+                    },
+                ]
+            }
+
+        return (_fake_query_builder_tool(), search_log)
+
+
+class VerifiedEvidenceModel(FakeModel):
+    async def report(self, *, context: str) -> ReportDraft:
+        # 报告必须引用上下文里真实存在的证据 ID，否则会被判越权。
+        ids = re.findall(r"evidenceId=([0-9a-f]{32})", context)
+        assert ids, "报告上下文里应当带有真实证据 ID"
+        markdown = (
+            "# 告警分析报告\n\n"
+            "## 📋 活跃告警清单\n- HighError / checkout / critical\n\n"
+            "## 🔍 告警根因分析1\n"
+            "- 详情：HighError\n"
+            "- 症状：错误率上升\n"
+            "- 日志证据：见已链接的真实证据\n"
+            "- 根因结论：依赖调用超时导致失败\n\n"
+            "## 🛠️ 处理方案执行1\n"
+            "- 已执行步骤：完成日志检索\n"
+            "- 建议：扩容依赖连接池\n"
+            "- 预期效果：超时率下降\n\n"
+            "## 📊 结论\n"
+            "- 整体评估：证据充分\n"
+            "- 关键发现：超时集中在依赖调用\n"
+            "- 后续建议：持续观察\n"
+            "- 风险评估：低\n"
+        )
+        return ReportDraft(
+            markdown=markdown,
+            claims=[
+                ReportClaimDraft(
+                    claimKey="root-cause",
+                    section="根因结论",
+                    # 只引用其中一条：报告不要求穷尽引用每一条支撑证据，
+                    # 因此不应因此被判为不确定（此前那条更严的检查已删除）。
+                    evidenceIds=[ids[0]],
+                    uncertain=False,
+                )
+            ],
+            uncertainty=False,
+        )
+
+
+async def test_verified_evidence_marks_task_succeeded(tmp_path: Path) -> None:
+    """证据充分且报告通过结构校验时，任务才标记 succeeded。
+
+    报告只引用了部分支撑证据（一条），这不应影响可信状态——规格只要求"每个关键结论
+    建立真实链接"，没有要求穷尽引用每一条证据。
+    """
+    url = f"sqlite+aiosqlite:///{tmp_path / 'verified.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            VerifiedEvidenceResolver([]),
+            VerifiedEvidenceModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            saved = await SqliteDiagnosticRepository(session).get_task("owner", task.id)
+            report = await SqliteDiagnosticRepository(session).latest_report("owner", task.id)
+
+        assert report is not None and report.trust_state == "verified_evidence"
+        assert saved is not None
+        assert saved.status == "succeeded"
+        assert saved.failure_code is None
     finally:
         await runtime.close()

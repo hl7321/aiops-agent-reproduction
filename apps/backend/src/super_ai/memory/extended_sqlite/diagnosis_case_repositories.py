@@ -16,6 +16,7 @@ from super_ai.memory.extended_sqlite.diagnosis_case_models import (
     DiagnosisCaseModel,
     DiagnosticCaseSourceModel,
 )
+from super_ai.memory.extended_sqlite.diagnostic_models import DiagnosticReportModel
 from super_ai.memory.primitives import new_id, utc_now
 
 
@@ -44,10 +45,19 @@ class SqliteDiagnosisCaseRepository:
         return _record(model) if model else None
 
     async def list(self, owner_user_id: str) -> list[DiagnosisCaseRecord]:
+        # 案例库的语义是"可信、可复用的诊断经验"：只列出来源报告被判定为
+        # verified_evidence 的案例。历史库里存在证据不足来源的条目——它们产生于
+        # "兜底报告也把任务标记成功"的旧行为（该行为已修正），列表不再展示它们，
+        # 数据保留以便追溯。
         models = (
             await self._session.scalars(
                 select(DiagnosisCaseModel)
+                .join(
+                    DiagnosticReportModel,
+                    DiagnosticReportModel.id == DiagnosisCaseModel.report_id,
+                )
                 .where(DiagnosisCaseModel.owner_user_id == owner_user_id)
+                .where(DiagnosticReportModel.trust_state == "verified_evidence")
                 .order_by(DiagnosisCaseModel.created_at.desc(), DiagnosisCaseModel.id.desc())
             )
         ).all()

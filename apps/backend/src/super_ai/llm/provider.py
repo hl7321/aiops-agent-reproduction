@@ -44,7 +44,9 @@ class QwenOpenAIProvider:
         self._http_client = http_client
 
     def create_chat_model(self) -> BaseChatModel:
-        api_key = self._settings.require_api_key()
+        # chat 有自己的生效端点与生效凭据：可以是另一家 OpenAI-compatible 厂商，
+        # 而 embedding / rerank 继续用顶层 baseUrl 与 apiKey。
+        api_key = self._settings.chat_api_key()
         chat = self._settings.chat
         capability = self._settings.capability_for_chat()
         try:
@@ -54,11 +56,11 @@ class QwenOpenAIProvider:
                 timeout=chat.timeout_seconds,
                 max_retries=chat.max_retries,
                 api_key=api_key,
-                base_url=self._settings.base_url,
+                base_url=self._settings.chat_base_url(),
                 profile={"max_input_tokens": capability.context_window_tokens},
             )
         except Exception as error:
-            raise sanitize_exception(error, api_key) from error
+            raise sanitize_exception(error, *self._settings.chat_redaction_keys()) from error
 
     async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         inputs = list(texts)
@@ -123,13 +125,18 @@ class QwenOpenAIProvider:
 
     async def readiness(self, capability: ProviderCapability) -> ProviderReadiness:
         started = perf_counter()
-        api_key = self._settings.require_api_key()
+        # 脱敏按这次调用真正会用到的那把 key 生效：chat 可能用的是独立凭据。
+        redaction_keys = (
+            self._settings.chat_redaction_keys()
+            if capability == "chat"
+            else (self._settings.require_api_key(),)
+        )
         try:
             if capability == "chat":
                 model = self.create_chat_model()
                 await model.ainvoke([HumanMessage(content="ping")])
                 model_name = self._settings.chat.model
-                base_url = self._settings.base_url
+                base_url = self._settings.chat_base_url()
             elif capability == "embedding":
                 await self.embed_documents(["ping"])
                 model_name = self._settings.embedding.model
@@ -139,7 +146,7 @@ class QwenOpenAIProvider:
                 model_name = self._settings.rerank.model
                 base_url = self._settings.rerank.endpoint
         except Exception as error:
-            raise sanitize_exception(error, api_key) from error
+            raise sanitize_exception(error, *redaction_keys) from error
         return ProviderReadiness(
             provider=self._settings.provider,
             model=model_name,

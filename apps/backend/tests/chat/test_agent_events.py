@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from super_ai.api_contracts import ApiErrorModel, ChatReference
+from super_ai.api_contracts import ApiErrorModel, ChatReference, ReferenceSource
 from super_ai.chat.agent_events import AgentEventMapper, TurnContext
 
 NOW = datetime(2026, 8, 18, 0, 0, tzinfo=timezone.utc)
@@ -70,10 +70,13 @@ def test_mapper_emits_current_turn_reference_and_safe_error_without_complete() -
         )
     )
 
-    assert reference_event.data.source.chunk_id == "chunk-1"
-    assert reference_event.data.source.document_id == "doc-1"
-    assert reference_event.data.source.rerank_score == 0.97
-    assert reference_event.data.source.score == reference_event.data.source.rerank_score
+    # `reference.source` 同时承载 chat 与 aiops 两种形状，这里断言的是 chat 形状。
+    chat_source = reference_event.data.source
+    assert isinstance(chat_source, ReferenceSource)
+    assert chat_source.chunk_id == "chunk-1"
+    assert chat_source.document_id == "doc-1"
+    assert chat_source.rerank_score == 0.97
+    assert chat_source.score == chat_source.rerank_score
     assert context.references == (reference,)
     assert error_event.data.error.code == "SYSTEM_INTERNAL_ERROR"
     with pytest.raises(RuntimeError, match="已经终结"):

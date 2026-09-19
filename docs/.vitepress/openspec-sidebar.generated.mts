@@ -127,6 +127,34 @@ export const openspecSidebar = [
       {
         "text": "2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance",
         "link": "/changes/archive/2026-08-24-harden-schema-aware-aiops-evidence-and-case-governance/"
+      },
+      {
+        "text": "2026-09-17-fix-aiops-evidence-reference-contract",
+        "link": "/changes/archive/2026-09-17-fix-aiops-evidence-reference-contract/"
+      },
+      {
+        "text": "2026-09-17-fix-aiops-query-artifact-and-tool-errors",
+        "link": "/changes/archive/2026-09-17-fix-aiops-query-artifact-and-tool-errors/"
+      },
+      {
+        "text": "2026-09-18-expose-full-aiops-tool-schemas",
+        "link": "/changes/archive/2026-09-18-expose-full-aiops-tool-schemas/"
+      },
+      {
+        "text": "2026-09-18-restructure-aiops-plan-execute-replan",
+        "link": "/changes/archive/2026-09-18-restructure-aiops-plan-execute-replan/"
+      },
+      {
+        "text": "2026-09-19-fix-aiops-plan-completion-and-report-trust",
+        "link": "/changes/archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/"
+      },
+      {
+        "text": "2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context",
+        "link": "/changes/archive/2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context/"
+      },
+      {
+        "text": "2026-09-19-support-independent-chat-model-endpoint",
+        "link": "/changes/archive/2026-09-19-support-independent-chat-model-endpoint/"
       }
     ]
   },

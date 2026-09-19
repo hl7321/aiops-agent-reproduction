@@ -228,13 +228,16 @@ def build_text_to_search_log_query_input(
     *,
     fallback_prompt: str,
 ) -> TextToSearchLogQueryInput:
+    """装配 query-builder 输入。
+
+    只做服务端权威字段注入。字段名不再做别名兼容：官方 schema 写的是 `Text`，
+    模型照着自己看到的完整说明填即可；填错会以校验错误返回并由纠错路径修正。
+    """
     region = defaults.region.strip()
     topic_id = defaults.topic_id.strip()
     if not region or not topic_id:
         raise ValueError("clsLogUpload region/topicId 配置缺失")
-    prompt = proposed.get(
-        "Text", proposed.get("Prompt", proposed.get("prompt", fallback_prompt))
-    )
+    prompt = proposed.get("Text", fallback_prompt)
     return TextToSearchLogQueryInput.model_validate(
         {"Region": region, "TopicId": topic_id, "Text": prompt}
     )
@@ -292,8 +295,48 @@ def _extract_generated_query(value: str) -> str:
     fenced = re.findall(r"```(?:sql|cql)?\s*(.*?)```", value, flags=re.IGNORECASE | re.DOTALL)
     if len(fenced) > 1:
         raise ValueError("TextToSearchLogQuery 返回了多个查询代码块")
-    query = fenced[0].strip() if fenced else value.strip()
+    # 工具返回把生成的 CQL 嵌在 JSON 字符串里，围栏代码块会连同转义序列一起被取出；
+    # 必须在切分与判空之前还原，否则字面量 \n、\" 会被当成查询语法送进 SearchLog。
+    query = _unescape_generated_query(fenced[0] if fenced else value).strip()
     query = re.split(r"\s+\|\s+(?=SELECT\b)", query, maxsplit=1, flags=re.IGNORECASE)[0].strip()
     if not query:
         raise ValueError("TextToSearchLogQuery 返回了空查询")
     return query
+
+
+_JSON_ESCAPE_LITERALS: Mapping[str, str] = {
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "b": "\b",
+    "f": "\f",
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+}
+_ESCAPE_SEQUENCE = re.compile(r"\\(.)")
+
+
+def _unescape_generated_query(value: str) -> str:
+    """把 JSON 转义文本还原成可直接执行的查询。
+
+    策略是三段式：
+
+    1. 文本里没有反斜杠时原样返回；
+    2. 有反斜杠时先尝试按 JSON 字符串严格解码，能解出来就用解码结果；
+    3. 严格解码失败时退化为逐序列替换，只还原已知转义，保留 `\\d` 这类合法反斜杠。
+
+    第 3 步是必需的：查询里本来就可能出现 CLS 自己的反斜杠（例如正则片段），
+    严格解码会失败，此处绝不能抛错把整次诊断打挂。
+    """
+    if "\\" not in value:
+        return value
+    try:
+        decoded = json.loads(f'"{value}"')
+    except (TypeError, ValueError):
+        decoded = None
+    if isinstance(decoded, str) and decoded:
+        return decoded
+    return _ESCAPE_SEQUENCE.sub(
+        lambda match: _JSON_ESCAPE_LITERALS.get(match.group(1), match.group(0)), value
+    )

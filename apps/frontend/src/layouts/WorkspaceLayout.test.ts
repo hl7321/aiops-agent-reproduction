@@ -85,7 +85,8 @@ describe("WorkspaceLayout", () => {
 
     expect(wrapper.find('[aria-label="会话区域"]').exists()).toBe(false);
     expect(wrapper.get("h1").text()).toBe("AIOps");
-    expect(wrapper.text()).toContain("智能诊断控制台");
+    // 页面内不再重复渲染控制台标题与说明，标题由布局层提供。
+    expect(wrapper.text()).not.toContain("智能诊断控制台");
     expect(wrapper.text()).not.toContain("将在后续提案实现");
     expect(wrapper.get('[data-route-canvas="aiops"]')).toBeTruthy();
     wrapper.unmount();

@@ -19,7 +19,7 @@ uv run uvicorn super_ai.app:create_local_app --factory --host 127.0.0.1 --port 8
 npm run frontend:dev -- --host 127.0.0.1
 ```
 
-官方 CLS MCP 在另一终端按官方文档以 Streamable HTTP 模式启动，配置 URL 为 `http://127.0.0.1:3000/mcp`。凭据只放 ignored JSON；不要放入 URL query。
+官方 CLS MCP 在另一终端按官方文档以 Streamable HTTP 模式启动，配置 URL 为 `http://127.0.0.1:3001/mcp`。端口固定 3001：Compose 里的 Attu 占用 3000，两者不可互换。凭据只放 ignored JSON；不要放入 URL query。
 
 停止应用进程不会删除 Compose volumes、SQLite、已下载镜像或 npm/uv 缓存。以后可重新运行启动脚本。`docker compose down` 停容器但保留命名卷；只有用户明确决定清数据时才考虑删除卷。
 

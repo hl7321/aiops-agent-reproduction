@@ -7,14 +7,24 @@ import type { DocumentIndexTask } from "./document-indexing";
 
 export type DiagnosticStatus = "accepted" | "running" | "succeeded" | "failed" | "cancelled";
 export type DiagnosticStepStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled";
-export type DiagnosticEvidenceKind =
-  | "alert"
-  | "knowledge"
-  | "log"
-  | "log_hit"
-  | "log_context"
-  | "query_artifact"
-  | "metric";
+
+/**
+ * 诊断证据种类的运行时事实来源。
+ *
+ * 类型与运行时校验都必须引用这一份清单：SSE guard 需要真实存在的值做判断，
+ * 而 TypeScript 类型在运行时不存在，因此只能由常量派生类型，不能反向维护两份。
+ */
+export const DIAGNOSTIC_EVIDENCE_KINDS = [
+  "alert",
+  "knowledge",
+  "log",
+  "log_hit",
+  "log_context",
+  "query_artifact",
+  "metric",
+] as const;
+
+export type DiagnosticEvidenceKind = (typeof DIAGNOSTIC_EVIDENCE_KINDS)[number];
 export type DiagnosticReportGenerationMode = "model" | "fallback";
 export type DiagnosticReportTrustState =
   | "verified_evidence"
@@ -144,11 +154,67 @@ export interface DiagnosticDetailData {
   readonly report: DiagnosticReport | null;
 }
 
+/** 一次诊断的阶段耗时：受理 / 规划 / 执行 / 报告。 */
+export interface DiagnosticExecutionStage {
+  readonly name: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly durationMs: number | null;
+}
+
+/** 单次尝试的真实记录；参数只给键名，不给取值。 */
+export interface DiagnosticExecutionAttempt {
+  readonly attempt: number;
+  readonly status: DiagnosticStepStatus;
+  readonly argumentKeys: readonly string[];
+  readonly failureClass: string | null;
+  readonly errorCategory: DiagnosticToolErrorCategory | null;
+  readonly errorMessage: string | null;
+  readonly resultSummary: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly durationMs: number | null;
+}
+
+export interface DiagnosticExecutionEvidenceRef {
+  readonly evidenceId: string;
+  readonly kind: DiagnosticEvidenceKind;
+  readonly summary: string;
+}
+
+/** 一条计划步骤的执行对账：计划意图 + 实际尝试 + 真实产出。 */
+export interface DiagnosticExecutionStep {
+  readonly position: number;
+  readonly toolName: string;
+  readonly purpose: string;
+  readonly executed: boolean;
+  readonly status: DiagnosticStepStatus;
+  readonly resultSummary: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly durationMs: number | null;
+  readonly attempts: readonly DiagnosticExecutionAttempt[];
+  readonly producedEvidence: readonly DiagnosticExecutionEvidenceRef[];
+}
+
+/** 后端组装的完整执行结果，供"一次点击发生了什么"展示。 */
+export interface DiagnosticExecutionResult {
+  readonly taskId: string | null;
+  readonly createdAt: string | null;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+  readonly durationMs: number | null;
+  readonly stages: readonly DiagnosticExecutionStage[];
+  readonly plan: readonly DiagnosticExecutionStep[];
+  readonly evidenceByKind: Readonly<Record<string, number>>;
+}
+
 export interface DiagnosticEvidenceChainData {
   readonly taskId: string;
   readonly evidence: readonly DiagnosticEvidence[];
   readonly reportEvidenceLinks: readonly ReportEvidenceLink[];
   readonly toolAudits: readonly AgentToolCallAudit[];
+  readonly executionResult: DiagnosticExecutionResult | null;
 }
 
 export interface DiagnosticCase {

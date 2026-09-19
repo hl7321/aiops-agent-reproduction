@@ -25,7 +25,9 @@
       "model": "qwen3.7-max",
       "temperature": 0.2,
       "timeoutSeconds": 120,
-      "maxRetries": 2
+      "maxRetries": 2,
+      "baseUrl": "",
+      "apiKey": ""
     },
     "embedding": {
       "model": "text-embedding-v4",
