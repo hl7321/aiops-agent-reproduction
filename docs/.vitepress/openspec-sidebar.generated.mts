@@ -151,6 +151,10 @@ export const openspecSidebar = [
       {
         "text": "2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context",
         "link": "/changes/archive/2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context/"
+      },
+      {
+        "text": "2026-09-19-support-independent-chat-model-endpoint",
+        "link": "/changes/archive/2026-09-19-support-independent-chat-model-endpoint/"
       }
     ]
   },

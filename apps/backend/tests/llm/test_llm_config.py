@@ -83,6 +83,7 @@ def test_typed_settings_preserve_defaults_under_nested_user_override(tmp_path: P
     [
         ("missing-embedding", "llm.embedding"),
         ("invalid-rerank-url", "llm.rerank.endpoint"),
+        ("invalid-chat-url", "llm.chat.baseUrl"),
         ("oversized-batch", "llm.embedding.batchSize"),
         ("missing-capability", "modelCapabilities"),
     ],
@@ -100,6 +101,8 @@ def test_invalid_llm_config_reports_safe_field_path(
         cast(dict[str, Any], llm["rerank"])["endpoint"] = "ftp://unsafe"
     elif case == "oversized-batch":
         cast(dict[str, Any], llm["embedding"])["batchSize"] = 11
+    elif case == "invalid-chat-url":
+        cast(dict[str, Any], llm["chat"])["baseUrl"] = "dashscope.example/v1"
     else:
         config["modelCapabilities"] = {}
     project_path, user_path = _write_config_pair(tmp_path, config)
@@ -144,3 +147,61 @@ def test_template_defaults_define_locked_qwen_profiles() -> None:
     assert settings.embedding.batch_size == 10
     assert settings.rerank.model == "qwen3-vl-rerank"
     assert settings.capability_for_chat().context_window_tokens == 262144
+
+
+def test_chat_override_endpoint_and_key_do_not_move_other_capabilities(tmp_path: Path) -> None:
+    """chat 可以独立指向另一家 OpenAI-compatible 厂商，embedding/rerank 留在原地。"""
+    config = _base_config("top-level-key")
+    llm = cast(dict[str, Any], config["llm"])
+    cast(dict[str, Any], llm["chat"]).update({
+        "model": "deepseek-chat",
+        "baseUrl": "https://api.deepseek.example/v1",
+        "apiKey": "chat-level-key",
+    })
+    config["modelCapabilities"] = {
+        "qwen3.7-max": {"contextWindowTokens": 262144},
+        "deepseek-chat": {"contextWindowTokens": 65536},
+    }
+    project_path, user_path = _write_config_pair(tmp_path, config)
+
+    settings = _module().load_llm_settings(project_path, user_path)
+
+    assert settings.chat.model == "deepseek-chat"
+    assert settings.chat_base_url() == "https://api.deepseek.example/v1"
+    assert settings.chat_api_key() == "chat-level-key"
+    # 另外两类能力必须完全不受影响
+    assert settings.base_url == "https://dashscope.example/compatible-mode/v1"
+    assert settings.require_api_key() == "top-level-key"
+
+
+def test_blank_chat_override_fields_fall_back_to_top_level(tmp_path: Path) -> None:
+    """模板里的空串必须等于"没写"，否则复制模板下来就会校验失败。"""
+    config = _base_config("top-level-key")
+    chat = cast(dict[str, Any], cast(dict[str, Any], config["llm"])["chat"])
+    chat["baseUrl"] = ""
+    chat["apiKey"] = ""
+    project_path, user_path = _write_config_pair(tmp_path, config)
+
+    settings = _module().load_llm_settings(project_path, user_path)
+
+    assert settings.chat.base_url is None
+    assert settings.chat.api_key is None
+    assert settings.chat_base_url() == "https://dashscope.example/compatible-mode/v1"
+    assert settings.chat_api_key() == "top-level-key"
+
+
+def test_provider_is_a_label_not_a_vendor_enum(tmp_path: Path) -> None:
+    """provider 只用于标识部署形态，跨厂商配置要能写一个真实的标签。"""
+    config = _base_config()
+    cast(dict[str, Any], config["llm"])["provider"] = "openai-compatible"
+    project_path, user_path = _write_config_pair(tmp_path, config)
+
+    assert _module().load_llm_settings(project_path, user_path).provider == "openai-compatible"
+
+    cast(dict[str, Any], config["llm"])["provider"] = ""
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    empty_path, empty_user_path = _write_config_pair(empty_dir, config)
+    with pytest.raises(ValueError) as captured:
+        _module().load_llm_settings(empty_path, empty_user_path)
+    assert "llm.provider" in str(captured.value)

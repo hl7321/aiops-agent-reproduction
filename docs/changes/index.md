@@ -40,6 +40,7 @@
 - [2026-09-18-restructure-aiops-plan-execute-replan](./archive/2026-09-18-restructure-aiops-plan-execute-replan/)
 - [2026-09-19-fix-aiops-plan-completion-and-report-trust](./archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/)
 - [2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context](./archive/2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context/)
+- [2026-09-19-support-independent-chat-model-endpoint](./archive/2026-09-19-support-independent-chat-model-endpoint/)
 
 ## 主规格
 
