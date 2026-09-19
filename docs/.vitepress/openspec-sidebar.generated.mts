@@ -13,10 +13,6 @@ export const openspecSidebar = [
     "text": "进行中的变更",
     "items": [
       {
-        "text": "fix-aiops-plan-completion-and-report-trust",
-        "link": "/changes/active/fix-aiops-plan-completion-and-report-trust/"
-      },
-      {
         "text": "handle-missing-log-context-locators",
         "link": "/changes/active/handle-missing-log-context-locators/"
       }
@@ -152,6 +148,10 @@ export const openspecSidebar = [
       {
         "text": "2026-09-18-restructure-aiops-plan-execute-replan",
         "link": "/changes/archive/2026-09-18-restructure-aiops-plan-execute-replan/"
+      },
+      {
+        "text": "2026-09-19-fix-aiops-plan-completion-and-report-trust",
+        "link": "/changes/archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/"
       }
     ]
   },

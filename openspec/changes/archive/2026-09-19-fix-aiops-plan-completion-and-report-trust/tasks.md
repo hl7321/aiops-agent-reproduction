@@ -53,11 +53,11 @@
 - [x] 8.5 运行 `npm run frontend:typecheck`、`npm run frontend:test`、`npm run frontend:build`，通过
 - [x] 8.6 运行 `openspec validate --all` 与 `git diff --check`，通过
 - [x] 8.7 真实 smoke：先传日志、等入库、再发告警，跑一次完整诊断，核对"某步失败后其余步骤仍执行""报告不再因标签写法回退""任务终态与信任状态一致"
-- [ ] 8.8 把 smoke 结论记入笔记（解决了什么、仍存在什么）
+- [x] 8.8 把 smoke 结论记入笔记（解决了什么、仍存在什么）
 
 ## 9. 归档与文档
 
-- [ ] 9.1 用 `openspec-verify-change` 检查完整性、正确性与设计一致性，修复全部 CRITICAL 问题
-- [ ] 9.2 同步 delta specs 到主规格并按 Conventional Commits 提交
-- [ ] 9.3 运行 `wiki-sync` 同步 `docs/changes/`，并确认 `npm run docs:build` 通过
-- [ ] 9.4 归档变更并更新 Obsidian 笔记：进度总览、当前任务状态、已知问题与待改进
+- [x] 9.1 用 `openspec-verify-change` 检查完整性、正确性与设计一致性，修复全部 CRITICAL 问题
+- [x] 9.2 同步 delta specs 到主规格并按 Conventional Commits 提交
+- [x] 9.3 运行 `wiki-sync` 同步 `docs/changes/`，并确认 `npm run docs:build` 通过
+- [x] 9.4 归档变更并更新 Obsidian 笔记：进度总览、当前任务状态、已知问题与待改进

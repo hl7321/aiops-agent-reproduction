@@ -2,7 +2,6 @@
 
 ## 进行中的变更
 
-- [fix-aiops-plan-completion-and-report-trust](./active/fix-aiops-plan-completion-and-report-trust/)
 - [handle-missing-log-context-locators](./active/handle-missing-log-context-locators/)
 
 ## 已归档变更
@@ -39,6 +38,7 @@
 - [2026-09-17-fix-aiops-query-artifact-and-tool-errors](./archive/2026-09-17-fix-aiops-query-artifact-and-tool-errors/)
 - [2026-09-18-expose-full-aiops-tool-schemas](./archive/2026-09-18-expose-full-aiops-tool-schemas/)
 - [2026-09-18-restructure-aiops-plan-execute-replan](./archive/2026-09-18-restructure-aiops-plan-execute-replan/)
+- [2026-09-19-fix-aiops-plan-completion-and-report-trust](./archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/)
 
 ## 主规格
 
