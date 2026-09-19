@@ -27,16 +27,47 @@ npm run docs:preview
 
 Windows checkout 必须先启用 Developer Mode 和 Git symlink 支持，不能复制 `openspec` 目录作为 fallback。具体检查见 `docs/setup/windows.md`。
 
-## 配置
+## 第一次运行（照着做五步）
+
+### 1. 前置依赖
+
+| 需要什么 | 说明 |
+|---|---|
+| Docker Desktop | 必须**先打开**，五服务 Compose（etcd / MinIO / Milvus / Attu / Alertmanager）跑在容器里；镜像由 `infra/compose.yaml` 固定版本，仓库不发布、也不需要预拉 |
+| Node.js 20+ 与 npm | 前端工作台与官方 CLS MCP |
+| uv | 后端依赖与虚拟环境（Python 3.10+） |
+| npx | 以 `npx -y cls-mcp-server@latest` 在主机启动官方腾讯云 CLS MCP（**不进 Compose**） |
+
+各平台细节见 `docs/setup/macos.md`、`docs/setup/linux.md`、`docs/setup/windows.md`。
+
+### 2. 生成两份本地配置
 
 ```bash
 cp config/project.template.json config/project.json
 cp config/user.project.template.json config/user.project.json
 ```
 
-只在被 Git 忽略的 `config/user.project.json` 填写 Qwen、CLS 等个人凭据。后端只读取两份本地 JSON 的递归深合并结果；浏览器 bundle 只接收公开 allowlist。不要把 token/secret 放进 MCP URL query，也不要提交本机 JSON。
+两份文件都在 `.gitignore` 里，**永远不会被提交**。模板里的密钥字段是空的，程序只读这两份本地 JSON 的递归深合并结果，不从环境变量补取凭据。
 
-## 启动
+### 3. 填凭据（不填也能启动，但对应能力会明确报 unavailable）
+
+写在 `config/user.project.json`（这是唯一的密钥落点）：
+
+| 字段 | 用途 | 不填的后果 |
+|---|---|---|
+| `llm.chat.apiKey` | 聊天模型（默认 DeepSeek 端点） | 聊天与 AIOps 诊断不可用 |
+| `llm.apiKey` | embedding 与 rerank（百炼） | 知识库上传/检索不可用 |
+| `clsMcpServer.secretId` / `secretKey` | 官方 CLS MCP 的真实日志工具 | `/ready` 的 mcp 显示 unavailable |
+| `clsLogUpload.*` | 上传示例日志用的日志集/主题 | 只有跑示例 fixtures 时才需要 |
+| `aiopsDemo.email` / `password` | 演示账号（可选） | 只有示例脚本需要 |
+
+`config/project.json` 放非密钥的默认值（模型名、端点、端口）。要换模型时，改 `llm.chat.model` 和 `modelCapabilities` 里**同名**的 `contextWindowTokens` 两处，换厂商再加 `llm.chat.baseUrl`。规则详见 `docs/architecture/model-providers.md`。
+
+不要把 token/secret 放进 MCP URL query，也不要提交这两份本机 JSON。
+
+### 4. 启动
+
+一条命令会启动五服务 Compose、`uv sync`、Alembic 迁移、官方 CLS MCP（仅凭据齐备时）、FastAPI 与 Vite。
 
 macOS、Linux 或 Git Bash：
 
@@ -50,7 +81,7 @@ Windows cmd 或 PowerShell：
 scripts\start-local.bat
 ```
 
-脚本启动五服务 Compose，执行 `uv sync` 与 Alembic migration，再在主机启动官方 CLS MCP（仅凭据齐备时）、FastAPI 与 Vite。日志写入 ignored 的 `apps/backend/var`。普通启动不会上传 CLS 日志、发布告警或 seed SOP。
+日志写入 ignored 的 `apps/backend/var`。普通启动不会上传 CLS 日志、发布告警或 seed SOP；这些是需要显式执行的 fixtures，见 `docs/tutorials/real-log-and-alert.md`。
 
 访问地址：
 
@@ -60,7 +91,19 @@ scripts\start-local.bat
 - Attu / Alertmanager：http://127.0.0.1:3000 / http://127.0.0.1:9093
 - 官方 CLS MCP（主机进程，不是容器）：http://127.0.0.1:3001/mcp —— 端口固定 3001，3000 归 Attu
 
-各平台前置安装见 `docs/setup/`；手动分步启动见 `docs/operations-and-monitoring.md`。
+### 5. 验证跑起来了
+
+```bash
+curl -s http://127.0.0.1:8000/ready
+```
+
+`ok: true` 且 `sqlite` / `milvus` / `qwen` / `mcp` 四项都 ready，就说明这一轮启动是完整的。
+
+其中 `qwen` 这一项实际探测的是**聊天模型**（可能是 DeepSeek 等任何 OpenAI-compatible 端点），
+`milvus` 依赖 embedding 凭据。**没有填对应凭据时这两项会显示 unavailable 并给出原因，这是如实报告，不是崩溃**：
+页面能打开、能注册登录，但没有凭据的聊天/检索/诊断不会假装成功。
+
+各平台前置安装见 `docs/setup/`；手动分步启动与故障排查见 `docs/operations-and-monitoring.md`。
 
 > **开着系统代理的 macOS 用户注意**：ClashX、Surge 之类的代理会把 `127.0.0.1` 的请求也转发出去，
 > 表现为后端日志里连的是代理端口（例如 7890），MCP 一直连不上而 `/ready` 报 `mcp: unavailable`。
@@ -94,3 +137,7 @@ git diff --check
 Windows 的 `start-local.bat` 必须在真实 cmd/PowerShell 验证，不能用 Bash 代替。自动测试使用临时配置和注入式外部边界，只证明代码合同；真实 Qwen/Milvus/CLS MCP/CLS/Alertmanager 桌面链路需具备环境后人工执行并如实记录。
 
 真实 fixture 的副作用与顺序见 `docs/tutorials/real-log-and-alert.md`。OpenSpec 文档使用简体中文，提交遵循 Conventional Commits。
+
+## 许可证
+
+MIT，见 [LICENSE](./LICENSE)。
