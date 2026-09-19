@@ -8,6 +8,7 @@ import type {
 } from "@super-ai/api-contracts";
 
 import type { AiopsTimelineItem } from "../../aiops/timeline";
+import { diagnosticStatusLabel } from "../../aiops/status";
 import { renderSafeMarkdown } from "../../chat/renderSafeMarkdown";
 import { useUserFeedbackStore } from "../../stores/userFeedback";
 import UserFeedbackControl from "../feedback/UserFeedbackControl.vue";
@@ -35,6 +36,9 @@ const userFeedback = useUserFeedbackStore();
 const reportHtml = computed(() => renderSafeMarkdown(props.detail?.report?.markdown ?? ""));
 const diagnosticStatus = computed(() => props.detail?.task.status ?? "未选择");
 const jobStatus = computed(() => props.detail?.backgroundJob.status ?? "未选择");
+// 诊断终态表达的是"有没有得出可信结论"，不是"流程有没有走完"：
+// 证据不足的任务会落到 failed + 专用错误码，这里据此与系统故障区分展示。
+const diagnosticStatusText = computed(() => diagnosticStatusLabel(props.detail?.task));
 const reportTrustLabel = computed(() => {
   const state = props.detail?.report?.trustState;
   if (state === "verified_evidence") return "可信证据已验证";
@@ -63,7 +67,7 @@ function statusLabel(status: string): string {
   <section class="aiops-column aiops-center" aria-label="当前报告与实时 timeline">
     <header class="center-heading">
       <div><p class="eyebrow">CURRENT DIAGNOSIS</p><h2>{{ detail?.task.query || detail?.task.alerts[0]?.alertName || "选择或创建诊断" }}</h2></div>
-      <div class="status-pair" aria-label="诊断与后台任务状态"><span>诊断：<strong>{{ statusLabel(diagnosticStatus) }} ({{ diagnosticStatus }})</strong></span><span>后台任务：<strong>{{ statusLabel(jobStatus) }} ({{ jobStatus }})</strong></span></div>
+      <div class="status-pair" aria-label="诊断与后台任务状态"><span>诊断：<strong>{{ diagnosticStatusText }} ({{ diagnosticStatus }})</strong></span><span>后台任务：<strong>{{ statusLabel(jobStatus) }} ({{ jobStatus }})</strong></span></div>
     </header>
     <div class="stream-controls">
       <span v-if="streaming" role="status"><Radio :size="14" aria-hidden="true" />正在读取持久事件</span>

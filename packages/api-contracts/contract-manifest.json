@@ -103,6 +103,12 @@
       "httpStatus": 503,
       "defaultMessage": "当前没有可用的日志检索工具"
     },
+    "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE": {
+      "code": "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+      "category": "system",
+      "httpStatus": 200,
+      "defaultMessage": "证据不足，未能得出可信结论"
+    },
     "SYSTEM_UNAVAILABLE": {
       "code": "SYSTEM_UNAVAILABLE",
       "category": "system",

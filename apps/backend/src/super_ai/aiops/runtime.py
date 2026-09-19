@@ -345,16 +345,21 @@ class DiagnosticRuntime:
                     )
             first_attempt = max((item.attempt for item in matching_attempts), default=0) + 1
             if first_attempt > MAX_STEP_ATTEMPTS:
+                # 恢复时发现这一步已经用完尝试次数：如实记录并继续处理剩余步骤，
+                # 不能因为历史失败把整份计划提前终止。
                 state = {
                     **state,
+                    "next_position": state["next_position"] + 1,
                     "last_error": f"工具步骤已达到 {MAX_STEP_ATTEMPTS} 次尝试上限",
                 }
                 await checkpoint("executor", state)
                 return state
             previous_error: str | None = None
+            step_succeeded = False
             for attempt in range(first_attempt, MAX_STEP_ATTEMPTS + 1):
                 await context.raise_if_cancelled()
-                invocation_arguments = candidate_arguments
+                # 每轮从空参数开始：真正待调用的参数在模型填参并过滤之后才确定。
+                invocation_arguments: dict[str, JsonValue] = {}
                 phase = "input"
                 step = None
                 call_id = uuid4().hex
@@ -386,6 +391,9 @@ class DiagnosticRuntime:
                         for key, value in filled.arguments.items()
                         if key in visible
                     }
+                    # 注意：这里必须用刚填好的 candidate_arguments 初始化待调用参数。
+                    # 在进入循环时提前赋值会用到上一轮的旧值，导致第一次调用拿到空参数。
+                    invocation_arguments = candidate_arguments
                     if is_query_builder_tool(plan_step.tool_name):
                         if self._search_log_defaults is None:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")
@@ -520,6 +528,7 @@ class DiagnosticRuntime:
                         "next_position": state["next_position"] + 1,
                         "last_error": None,
                     }
+                    step_succeeded = True
                     break
                 except Exception as error:
                     failure = classify_tool_failure(
@@ -595,6 +604,10 @@ class DiagnosticRuntime:
                     # 由它在下一轮重新生成参数；不需要另开一条"修参"专用路径。
                     if failure.delay:
                         await asyncio.sleep(failure.delay)
+            if not step_succeeded:
+                # 这一步尝试耗尽：如实记录失败，然后推进到下一步继续处理，
+                # 让计划完整跑完，把判断交给 Replanner。
+                state = {**state, "next_position": state["next_position"] + 1}
             await checkpoint("executor", state)
             return state
 
@@ -616,9 +629,10 @@ class DiagnosticRuntime:
                     is_log_context_tool(item.tool_name) for item in task.current_plan
                 ),
             )
-            # `last_error` 非空表示 executor 已经把当前这一步的尝试次数用尽并且没有前进，
-            # 此时不能再把控制权交回 executor，否则同一个步骤会被无限重跑。
-            if remaining and not state.get("last_error"):
+            # 路由只看进度与证据：executor 在步骤失败后同样推进进度指针，
+            # 因此"指针继续前进"本身就是有界性保证，不再需要看失败标记。
+            # `last_error` 保留给报告说明使用，不影响路由。
+            if remaining:
                 state = {**state, "route": "executor"}
                 message = (
                     f"继续执行诊断计划（剩余 {len(remaining)} 步，"
@@ -628,8 +642,8 @@ class DiagnosticRuntime:
                 state = {**state, "route": SSE_REPORT_TYPE}
                 message = (
                     "计划执行完毕，正在生成报告"
-                    if not state.get("last_error")
-                    else "步骤执行失败，按已有证据生成报告"
+                    if state.get("last_error") is None
+                    else "计划已执行完毕（含失败步骤），正在按已有证据生成报告"
                 )
             progress = min(85, 20 + state["next_position"] * 10)
             await emit(
@@ -729,6 +743,32 @@ class DiagnosticRuntime:
                 state = {**state, "route": "end"}
                 await checkpoint(SSE_REPORT_TYPE, state)
                 raise AppError("SYSTEM_UNAVAILABLE")
+            if trust_state == "insufficient_evidence":
+                # 报告已经生成，但证据不足以支撑可信结论：任务不能标记成功。
+                # 用专用稳定错误码与系统故障区分，报告与已收集证据链保持可读——
+                # 失败的是"结论可信度"，不是"可观测性"。这里不抛异常：诊断流程本身
+                # 完整跑完了，结论由任务状态表达。
+                await self._store.call(
+                    "transition_task",
+                    owner,
+                    task_id,
+                    "failed",
+                    failure_code="SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+                    failure_reason="报告已生成，但证据不足，未能得出可信结论",
+                )
+                await emit(
+                    SSE_TASK_STATUS_TYPE,
+                    {
+                        "taskId": task_id,
+                        "status": "failed",
+                        "message": "证据不足，未能得出可信结论",
+                        "progress": 100,
+                        "failureCode": "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+                    },
+                )
+                state = {**state, "route": "end"}
+                await checkpoint(SSE_REPORT_TYPE, state)
+                return state
             await self._store.call("transition_task", owner, task_id, "succeeded")
             await emit(
                 SSE_TASK_STATUS_TYPE,

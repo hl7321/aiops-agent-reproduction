@@ -7,6 +7,7 @@ import pytest
 from super_ai.aiops.evidence import alert_evidence, normalize_tool_evidence
 from super_ai.aiops.models import DiagnosticEvidenceRecord
 from super_ai.aiops.planning import (
+    REPORT_SYSTEM_PROMPT,
     PlanDraft,
     PlanStepDraft,
     ReportDraft,
@@ -17,7 +18,14 @@ from super_ai.aiops.planning import (
     normalize_search_log_arguments,
     validate_plan,
 )
-from super_ai.aiops.reporting import build_fallback_report, validate_report
+from super_ai.aiops.reporting import (
+    CONCLUSION_LABELS,
+    REPORT_HEADINGS,
+    ROOT_CAUSE_LABELS,
+    SOLUTION_LABELS,
+    build_fallback_report,
+    validate_report,
+)
 from super_ai.aiops.router import map_job_event_to_sse
 from super_ai.aiops.runtime import _latest_query_artifact  # pyright: ignore[reportPrivateUsage]
 from super_ai.aiops.tool_adapters import (
@@ -529,3 +537,21 @@ def test_persisted_terminal_event_maps_to_one_complete_and_shared_error() -> Non
     failed_payloads = map_job_event_to_sse(failed, "task")
     assert [item["type"] for item in success_payloads] == ["complete"]
     assert [item["type"] for item in failed_payloads] == ["complete"]
+
+
+def test_report_prompt_states_every_required_literal_label() -> None:
+    """报告提示词必须逐字包含校验器要求的标签，避免再次漂移。
+
+    真机上模型按 `- **告警名称**: ...` 这种半角风格书写，被校验器判为
+    "模型报告缺少固定中文字段"，报告直接走兜底，任务却仍标记成功。
+    """
+    required = (
+        *REPORT_HEADINGS,
+        *ROOT_CAUSE_LABELS,
+        *SOLUTION_LABELS,
+        *CONCLUSION_LABELS,
+    )
+
+    missing = [label for label in required if label not in REPORT_SYSTEM_PROMPT]
+
+    assert missing == []

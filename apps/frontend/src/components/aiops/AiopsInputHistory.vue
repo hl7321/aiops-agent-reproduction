@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 
 import type { ActiveAlert, DiagnosticTask } from "@super-ai/api-contracts";
 
+import { diagnosticStatusLabel as statusLabel } from "../../aiops/status";
 const props = defineProps<{
   alerts: readonly ActiveAlert[];
   history: readonly DiagnosticTask[];
@@ -38,9 +39,6 @@ function alertKey(alert: ActiveAlert): string {
   return `${alert.source.name}:${alert.alertName}:${alert.startsAt}`;
 }
 
-function statusLabel(status: DiagnosticTask["status"]): string {
-  return ({ accepted: "已受理", running: "运行中", succeeded: "已成功", failed: "失败", cancelled: "已取消" })[status];
-}
 </script>
 
 <template>
@@ -78,7 +76,7 @@ function statusLabel(status: DiagnosticTask["status"]): string {
           :class="{ 'is-selected': task.id === selectedTaskId }" @click="emit('selectTask', task.id)"
         >
           <strong>{{ task.query || task.alerts[0]?.alertName || "告警诊断" }}</strong>
-          <span>{{ statusLabel(task.status) }} · {{ task.updatedAt }}</span>
+          <span>{{ statusLabel(task) }} · {{ task.updatedAt }}</span>
         </button>
       </div>
     </section>

@@ -295,3 +295,38 @@ async def test_feedback_can_be_deleted_after_promotion_without_deleting_assets(
         assert await _asset_counts(runtime) == (1, 1, 1)
     finally:
         await runtime.close()
+
+
+async def test_insufficient_evidence_task_cannot_be_promoted(tmp_path: Path) -> None:
+    """证据不足的诊断终态是 failed：即使有正向反馈也不能沉淀为案例。
+
+    真实运行会把这类任务写成 failed + SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE，
+    这里显式复现该终态，确认它同时被状态与信任状态两道门挡住。
+    """
+    runtime = await _runtime(tmp_path / "insufficient-evidence.sqlite3")
+    try:
+        task_id, _report_id, _ = await _report(
+            runtime,
+            "owner",
+            trust_state="insufficient_evidence",
+            uncertainty=True,
+            feedback="positive",
+        )
+        async with transaction_scope(runtime.session_factory) as session:
+            await SqliteDiagnosticRepository(session).transition_task(
+                "owner",
+                task_id,
+                "failed",
+                failure_code="SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+                failure_reason="报告已生成，但证据不足，未能得出可信结论",
+            )
+
+        with pytest.raises(AppError) as caught:
+            await DiagnosisCasePromoter(runtime.session_factory).promote(
+                "owner", task_id, resolution="create_new"
+            )
+
+        assert caught.value.code == "BUSINESS_RULE_VIOLATION"
+        assert await _asset_counts(runtime) == (0, 0, 0)
+    finally:
+        await runtime.close()

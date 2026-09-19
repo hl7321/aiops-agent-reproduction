@@ -1,3 +1,4 @@
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
@@ -18,6 +19,7 @@ from super_ai.aiops.planning import (
     PlanDraft,
     PlanStepDraft,
     ReplanDraft,
+    ReportClaimDraft,
     ReportDraft,
     SearchLogQueryDefaults,
     StepArgumentsDraft,
@@ -369,7 +371,12 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
                 "owner", job.id, after_sequence=0
             )
             cases = await DiagnosisCasePersistor(runtime.session_factory).list("owner")
-        assert saved is not None and saved.status == "succeeded"
+        # 报告生成了，但证据不足：任务终态必须表达"未能得出可信结论"，
+        # 而不是因为"报告已生成"就标记成功。
+        assert saved is not None
+        assert saved.status == "failed"
+        assert saved.failure_code == "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE"
+        assert saved.failure_reason is not None and "证据不足" in saved.failure_reason
         # 查询步骤产出中间产物，日志检索产出的才是证据。
         assert [item.kind for item in evidence] == ["query_artifact", "log_hit"]
         assert report is not None and report.generation_mode == "fallback"
@@ -1058,3 +1065,283 @@ def test_execution_result_carries_real_detail_and_redacts_sensitive_arguments() 
     produced = cast(list[dict[str, JsonValue]], entries[1]["producedEvidence"])
     assert [item["evidenceId"] for item in produced] == ["evidence-1"]
     assert result["evidenceByKind"] == {"log_hit": 1}
+
+
+class PlanCompletionResolver:
+    """提供生成查询、永远查不到日志的 SearchLog、以及可成功的 QueryMetric。"""
+
+    def __init__(self) -> None:
+        self.order: list[str] = []
+
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id and builtin_tool_names == frozenset({"knowledge_retrieval"})
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float, To: float, Query: str, Region: str, TopicId: str = ""
+        ) -> object:
+            """查询真实测试边界日志。"""
+            self.order.append("search")
+            return {"structuredContent": []}
+
+        @tool("QueryMetric")
+        async def query_metric(Query: str, Region: str, TopicId: str = "") -> object:
+            """查询指标趋势。"""
+            self.order.append("metric")
+            return {"structuredContent": {"series": [{"timestamp": 1, "value": 2}]}}
+
+        return (_fake_query_builder_tool(), search_log, query_metric)
+
+
+class PlanCompletionModel(FakeModel):
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        assert context and not validation_errors
+        return PlanDraft(
+            steps=[
+                _query_builder_step(),
+                _search_step("查询告警日志"),
+                PlanStepDraft(toolName="QueryMetric", purpose="查询指标趋势"),
+            ]
+        )
+
+    async def fill_step_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft:
+        assert context and plan and tool.name == step.tool_name
+        if tool.name == "TextToSearchLogQuery":
+            return StepArgumentsDraft(arguments={"Text": "查询告警日志"})
+        if tool.name == "QueryMetric":
+            return StepArgumentsDraft(arguments={"Query": "up"})
+        return StepArgumentsDraft(arguments=dict(VALID_TIME_WINDOW))
+
+
+async def test_failed_step_does_not_stop_the_remaining_plan(tmp_path: Path) -> None:
+    """某一步失败后其余步骤仍要执行，计划跑完才交给 Replanner。"""
+    url = f"sqlite+aiosqlite:///{tmp_path / 'plan-completion.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        resolver = PlanCompletionResolver()
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            resolver,
+            PlanCompletionModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            steps = await SqliteDiagnosticRepository(session).list_steps("owner", task.id)
+
+        # 第 1 步（日志检索）失败，但第 2 步（指标查询）仍然执行。
+        assert [(item.position, item.status) for item in steps] == [
+            (0, "succeeded"),
+            (1, "failed"),
+            (2, "succeeded"),
+        ]
+        assert resolver.order == ["search", "metric"]
+    finally:
+        await runtime.close()
+
+
+def test_execution_result_covers_every_step_when_all_fail() -> None:
+    """全部步骤失败且没有任何证据时，执行结果仍覆盖计划的每一步。"""
+    now = utc_now()
+    plan = (
+        PlanStep(0, "TextToSearchLogQuery", "生成检索语句", {}),
+        PlanStep(1, "SearchLog", "查询真实日志", {}),
+        PlanStep(2, "QueryMetric", "查询指标趋势", {}),
+    )
+
+    def _failed(step_id: str, position: int, tool_name: str) -> DiagnosticStepRecord:
+        return DiagnosticStepRecord(
+            id=step_id,
+            owner_user_id="owner",
+            diagnostic_task_id="task",
+            plan_version=1,
+            position=position,
+            attempt=1,
+            tool_name=tool_name,
+            arguments={},
+            status="failed",
+            result_summary=None,
+            error_message="transport: 连接中断",
+            started_at=now,
+            completed_at=now,
+            created_at=now,
+            error_category="transport",
+        )
+
+    steps = (
+        _failed("step-0", 0, "TextToSearchLogQuery"),
+        _failed("step-1", 1, "SearchLog"),
+        _failed("step-2", 2, "QueryMetric"),
+    )
+
+    result = build_execution_result(plan, steps, ())
+
+    entries = cast(list[dict[str, JsonValue]], result["plan"])
+    assert [item["position"] for item in entries] == [0, 1, 2]
+    assert [item["status"] for item in entries] == ["failed", "failed", "failed"]
+    assert all(item["producedEvidence"] == [] for item in entries)
+    assert result["evidenceByKind"] == {}
+
+
+class VerifiedEvidenceResolver(FakeResolver):
+    """日志检索返回两条命中，足以满足非时序证据规则。"""
+
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id and builtin_tool_names == frozenset({"knowledge_retrieval"})
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float, To: float, Query: str, Region: str, TopicId: str = ""
+        ) -> object:
+            """查询真实测试边界日志。"""
+            self.arguments.append({"Query": Query})
+            return {
+                "structuredContent": [
+                    {
+                        "Time": int(To) - 1000,
+                        "PkgId": "",
+                        "PkgLogId": "",
+                        "LogJson": '{"context_sequence":"1","message":"基线"}',
+                    },
+                    {
+                        "Time": int(To),
+                        "PkgId": "",
+                        "PkgLogId": "",
+                        "LogJson": '{"context_sequence":"2","message":"异常"}',
+                    },
+                ]
+            }
+
+        return (_fake_query_builder_tool(), search_log)
+
+
+class VerifiedEvidenceModel(FakeModel):
+    async def report(self, *, context: str) -> ReportDraft:
+        # 报告必须引用上下文里真实存在的证据 ID，否则会被判越权。
+        ids = re.findall(r"evidenceId=([0-9a-f]{32})", context)
+        assert ids, "报告上下文里应当带有真实证据 ID"
+        markdown = (
+            "# 告警分析报告\n\n"
+            "## 📋 活跃告警清单\n- HighError / checkout / critical\n\n"
+            "## 🔍 告警根因分析1\n"
+            "- 详情：HighError\n"
+            "- 症状：错误率上升\n"
+            "- 日志证据：见已链接的真实证据\n"
+            "- 根因结论：依赖调用超时导致失败\n\n"
+            "## 🛠️ 处理方案执行1\n"
+            "- 已执行步骤：完成日志检索\n"
+            "- 建议：扩容依赖连接池\n"
+            "- 预期效果：超时率下降\n\n"
+            "## 📊 结论\n"
+            "- 整体评估：证据充分\n"
+            "- 关键发现：超时集中在依赖调用\n"
+            "- 后续建议：持续观察\n"
+            "- 风险评估：低\n"
+        )
+        return ReportDraft(
+            markdown=markdown,
+            claims=[
+                ReportClaimDraft(
+                    claimKey="root-cause",
+                    section="根因结论",
+                    # 报告需要链接全部支撑证据，否则会被判为证据未全部利用而标记不确定。
+                    evidenceIds=ids,
+                    uncertain=False,
+                )
+            ],
+            uncertainty=False,
+        )
+
+
+async def test_verified_evidence_marks_task_succeeded(tmp_path: Path) -> None:
+    """证据充分且报告通过结构校验时，任务才标记 succeeded。"""
+    url = f"sqlite+aiosqlite:///{tmp_path / 'verified.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            repository = SqliteDiagnosticRepository(session)
+            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
+            )
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            VerifiedEvidenceResolver([]),
+            VerifiedEvidenceModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            saved = await SqliteDiagnosticRepository(session).get_task("owner", task.id)
+            report = await SqliteDiagnosticRepository(session).latest_report("owner", task.id)
+
+        assert report is not None and report.trust_state == "verified_evidence"
+        assert saved is not None
+        assert saved.status == "succeeded"
+        assert saved.failure_code is None
+    finally:
+        await runtime.close()

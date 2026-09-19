@@ -27,6 +27,7 @@ ErrorCode: TypeAlias = Literal[
     "SYSTEM_MCP_CONNECTION_FAILED",
     "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
     "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
+    "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
     "SYSTEM_UNAVAILABLE",
 ]
 ErrorCategory: TypeAlias = Literal[
@@ -219,6 +220,14 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         category="system",
         http_status=503,
         default_message="当前没有可用的日志检索工具",
+    ),
+    # 报告已生成但证据不足以支撑可信结论。它与系统故障分开：任务同样落到 failed，
+    # 但 failureCode 让客户端能区分"执行失败"与"未能得出结论"。
+    "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE": ErrorDefinition(
+        code="SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+        category="system",
+        http_status=200,
+        default_message="证据不足，未能得出可信结论",
     ),
     "SYSTEM_UNAVAILABLE": ErrorDefinition(
         code="SYSTEM_UNAVAILABLE",
