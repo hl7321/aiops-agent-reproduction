@@ -4,7 +4,11 @@ import { computed, onBeforeUnmount, ref } from "vue";
 
 import type { DiagnosticExecutionResult } from "@super-ai/api-contracts";
 
-const props = defineProps<{ execution: DiagnosticExecutionResult | null }>();
+const props = defineProps<{
+  execution: DiagnosticExecutionResult | null;
+  /** 任务是否已经到终态（成功 / 失败 / 取消）。到终态后必须停止本地秒表。 */
+  finished: boolean;
+}>();
 
 /** 毫秒转成好读的时长；没有数据时如实显示未知，不编造 0。 */
 function formatDuration(value: number | null): string {
@@ -16,10 +20,17 @@ function formatDuration(value: number | null): string {
 // 正在进行的步骤还没写完成时间，后端返回的 durationMs 是 null。
 // 这里用一个本地秒表把它显示成"已进行 X 秒"，让运行中也有持续变化的时间。
 const nowMs = ref(Date.now());
-const ticker = setInterval(() => { nowMs.value = Date.now(); }, 1000);
+// 任务一旦判定为终态（成功/失败/取消），秒表立刻停下：否则失败的诊断会一直显示
+// "进行中"并且数字不断往上跳，看起来像是还在跑。
+const ticker = setInterval(() => {
+  if (props.finished) { clearInterval(ticker); return; }
+  nowMs.value = Date.now();
+}, 1000);
 onBeforeUnmount(() => { clearInterval(ticker); });
 
 function formatElapsed(startedAt: string | null): string | null {
+  // 终态之后不允许再用"现在"去算耗时——那只会算出一个永远增长的假数字。
+  if (props.finished) return null;
   if (startedAt === null) return null;
   const started = Date.parse(startedAt);
   if (Number.isNaN(started)) return null;
@@ -48,6 +59,8 @@ const totalDuration = computed(() => {
 });
 
 const runningStage = computed(() => {
+  // 终态任务没有"正在进行的阶段"。
+  if (props.finished) return null;
   const stages = props.execution?.stages ?? [];
   // 阶段的开始/结束时间由后端按真实时间戳切出来，这里只找"已经起步但还没收尾"的那一段。
   // 不能只看最后一段：规划期间真正在跑的是"规划"，最后一段"报告"还没开始。

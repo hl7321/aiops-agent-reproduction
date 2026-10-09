@@ -1193,6 +1193,47 @@ def test_execution_result_leaves_unfinished_stages_empty() -> None:
     assert entries[0]["startedAt"] == "2026-09-19T10:00:02.100000Z"
 
 
+def test_execution_result_closes_open_stage_when_task_failed_without_steps() -> None:
+    """任务在产生任何步骤之前就失败时，规划阶段必须以任务完成时间收尾。
+
+    否则这一阶段会永远显示"未结束"，前端就把它当成还在进行中、秒表一直往上跑。
+    """
+    created = datetime(2026, 9, 19, 10, 0, 0, tzinfo=timezone.utc)
+    started = created + timedelta(milliseconds=100)
+    completed = started + timedelta(seconds=6)
+    task = DiagnosticTaskRecord(
+        id="task",
+        owner_user_id="owner",
+        status="failed",
+        query=None,
+        alerts=(),
+        current_plan=(PlanStep(0, "SearchLog", "查询真实日志", {}),),
+        plan_version=1,
+        replan_count=0,
+        failure_code="SYSTEM_INTERNAL_ERROR",
+        failure_reason="第一次模型调用就失败",
+        created_at=created,
+        updated_at=completed,
+        started_at=started,
+        completed_at=completed,
+    )
+
+    result = build_execution_result(task.current_plan, (), (), task=task)
+
+    assert result["durationMs"] == 6100
+    stages = cast(list[dict[str, JsonValue]], result["stages"])
+    # 受理 100ms、规划 6000ms（用完成时间收尾）、执行与报告都没发生
+    assert [(item["name"], item["durationMs"]) for item in stages] == [
+        ("受理", 100),
+        ("规划", 6000),
+        ("执行", None),
+        ("报告", None),
+    ]
+    # 规划阶段必须有结束时间，前端才不会把它当成"还在进行中"
+    assert stages[1]["completedAt"] == "2026-09-19T10:00:06.100000Z"
+    assert stages[2]["startedAt"] is None
+
+
 class PlanCompletionResolver:
     """提供生成查询、永远查不到日志的 SearchLog、以及可成功的只读辅助工具。"""
 

@@ -39,6 +39,8 @@ const userFeedback = useUserFeedbackStore();
 const reportHtml = computed(() => renderSafeMarkdown(props.detail?.report?.markdown ?? ""));
 const diagnosticStatus = computed(() => props.detail?.task.status ?? "未选择");
 const jobStatus = computed(() => props.detail?.backgroundJob.status ?? "未选择");
+// 任务到终态之后，执行总账不能再显示"进行中"、也不能再用本地秒表往上加时间。
+const taskFinished = computed(() => ["succeeded", "failed", "cancelled"].includes(diagnosticStatus.value));
 // 诊断终态表达的是"有没有得出可信结论"，不是"流程有没有走完"：
 // 证据不足的任务会落到 failed + 专用错误码，这里据此与系统故障区分展示。
 const diagnosticStatusText = computed(() => diagnosticStatusLabel(props.detail?.task));
@@ -208,7 +210,7 @@ function onSplitterKeydown(index: number, event: KeyboardEvent): void {
       </section>
       <div class="splitter" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="调整诊断报告与执行总账的高度"
         data-splitter="report-ledger" @pointerdown="startDrag(0, $event)" @keydown="onSplitterKeydown(0, $event)" />
-      <AiopsExecutionLedger :execution="execution" />
+      <AiopsExecutionLedger :execution="execution" :finished="taskFinished" />
       <div class="splitter" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="调整执行总账与实时事件流的高度"
         data-splitter="ledger-timeline" @pointerdown="startDrag(1, $event)" @keydown="onSplitterKeydown(1, $event)" />
       <section class="timeline-panel">

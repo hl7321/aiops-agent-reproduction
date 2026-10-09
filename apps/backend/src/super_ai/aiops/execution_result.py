@@ -67,10 +67,18 @@ def _stages(
         if item.completed_at is not None:
             last_completed = item.completed_at
             break
+    # 任务已经结束时，还没收尾的阶段必须以任务完成时间收尾。
+    # 否则前端会把它当成"还在进行中"，本地秒表会一直往上跑——失败任务尤其明显：
+    # 一次模型调用就失败时根本没有步骤记录，"规划"阶段就永远没有结束时间。
+    finished_at = task.completed_at
+    planning_end = first_started if first_started is not None else finished_at
+    execution_end = None
+    if first_started is not None:
+        execution_end = last_completed if last_completed is not None else finished_at
     return [
         _stage("受理", task.created_at, task.started_at),
-        _stage("规划", task.started_at, first_started),
-        _stage("执行", first_started, last_completed),
+        _stage("规划", task.started_at, planning_end),
+        _stage("执行", first_started, execution_end),
         _stage("报告", last_completed, task.completed_at),
     ]
 

@@ -139,6 +139,9 @@ describe("AiopsView", () => {
   it("运行中的诊断用本地秒表持续显示已进行时长，而不是空白或只在结束后才有数字", async () => {
     const { wrapper, store } = await mountView();
     await flushPromises();
+    // 任务必须真的在跑：终态任务不允许再用本地秒表（否则失败的诊断会一直往上计数）。
+    store.activeDetail = { ...DETAIL, task: { ...TASK, status: "running" },
+      backgroundJob: { ...JOB, status: "running" } };
     // 用真实时间戳而不是 "now"：秒表靠 Date.parse 判断，占位字符串解析不出时间会退化成"—"。
     const startedAt = new Date(Date.now() - 12_000).toISOString();
     store.evidenceChain = {
@@ -172,6 +175,37 @@ describe("AiopsView", () => {
     expect(wrapper.text()).toContain("步骤 1：SearchLog");
     expect(wrapper.text()).toContain("已进行");
     expect(wrapper.text()).toContain("总耗时");
+    wrapper.unmount();
+  });
+
+  it("诊断失败后执行总账停止计时，不再显示进行中的阶段和秒表", async () => {
+    const { wrapper, store } = await mountView();
+    await flushPromises();
+    // 失败任务：在产生任何步骤之前就挂了，后端把"规划"阶段用完成时间收尾。
+    const startedAt = new Date(Date.now() - 30_000).toISOString();
+    const completedAt = new Date(Date.now() - 24_000).toISOString();
+    store.activeDetail = { ...DETAIL, task: { ...TASK, status: "failed", failureCode: "SYSTEM_INTERNAL_ERROR" },
+      backgroundJob: { ...JOB, status: "failed" } };
+    store.evidenceChain = {
+      ...CHAIN,
+      executionResult: {
+        ...CHAIN.executionResult!,
+        startedAt, completedAt, durationMs: 6_000,
+        stages: [
+          { name: "受理", startedAt, completedAt: startedAt, durationMs: 100 },
+          { name: "规划", startedAt, completedAt, durationMs: 6_000 },
+          { name: "执行", startedAt: null, completedAt: null, durationMs: null },
+          { name: "报告", startedAt: null, completedAt: null, durationMs: null },
+        ],
+        plan: [],
+      },
+    };
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("总耗时");
+    expect(wrapper.text()).toContain("6.0 秒");
+    expect(wrapper.text()).not.toContain("进行中：");
+    expect(wrapper.text()).not.toContain("已进行");
     wrapper.unmount();
   });
 
