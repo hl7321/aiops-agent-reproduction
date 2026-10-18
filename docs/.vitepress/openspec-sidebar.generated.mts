@@ -11,12 +11,7 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": [
-      {
-        "text": "fix-aiops-deterministic-log-window",
-        "link": "/changes/active/fix-aiops-deterministic-log-window/"
-      }
-    ]
+    "items": []
   },
   {
     "text": "已归档变更",
@@ -160,6 +155,10 @@ export const openspecSidebar = [
       {
         "text": "2026-09-19-support-independent-chat-model-endpoint",
         "link": "/changes/archive/2026-09-19-support-independent-chat-model-endpoint/"
+      },
+      {
+        "text": "2026-10-18-fix-aiops-deterministic-log-window",
+        "link": "/changes/archive/2026-10-18-fix-aiops-deterministic-log-window/"
       },
       {
         "text": "2026-10-18-fix-aiops-report-claim-contract",

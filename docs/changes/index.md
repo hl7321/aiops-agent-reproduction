@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- [fix-aiops-deterministic-log-window](./active/fix-aiops-deterministic-log-window/)
+- 无
 
 ## 已归档变更
 
@@ -41,6 +41,7 @@
 - [2026-09-19-fix-aiops-plan-completion-and-report-trust](./archive/2026-09-19-fix-aiops-plan-completion-and-report-trust/)
 - [2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context](./archive/2026-09-19-simplify-aiops-evidence-gate-and-retire-log-context/)
 - [2026-09-19-support-independent-chat-model-endpoint](./archive/2026-09-19-support-independent-chat-model-endpoint/)
+- [2026-10-18-fix-aiops-deterministic-log-window](./archive/2026-10-18-fix-aiops-deterministic-log-window/)
 - [2026-10-18-fix-aiops-report-claim-contract](./archive/2026-10-18-fix-aiops-report-claim-contract/)
 
 ## 主规格
