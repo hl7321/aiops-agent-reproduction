@@ -107,20 +107,34 @@ def test_catalog_hides_server_provided_fields_and_keeps_field_constraints() -> N
             "From": {"type": "number", "description": "起始时间，毫秒时间戳"},
             "To": {"type": "number", "description": "结束时间，毫秒时间戳"},
             "Query": {"type": "string", "description": "检索语句"},
-            "Limit": {"type": "number", "default": 10, "description": "返回条数，1-100"},
+            "Limit": {
+                "type": "number",
+                "default": 10,
+                "description": "返回条数，1-100",
+                "minimum": 1,
+                "maximum": 100,
+            },
             "TopicId": {"type": "string", "description": "日志主题 ID"},
             "Region": {"type": "string", "description": "地域，如 ap-guangzhou"},
         },
         "required": ["From", "To", "Query", "Region", "TopicId"],
+        "additionalProperties": False,
     }
     registry = build_aiops_tool_registry((search,))
     schema = registry.catalog[0].input_schema
     assert schema["properties"] == {
         "Query": {"type": "string", "description": "检索语句"},
-        "Limit": {"type": "number", "default": 10, "description": "返回条数，1-100"},
+        "Limit": {
+            "type": "number",
+            "default": 10,
+            "description": "返回条数，1-100",
+            "minimum": 1,
+            "maximum": 100,
+        },
     }
     # 服务端注入的字段同时从必填列表移除，避免出现"必填但看不见"
     assert schema["required"] == ["Query"]
+    assert schema["additionalProperties"] is False
 
 
 def test_catalog_accepts_official_flat_schema_shape() -> None:

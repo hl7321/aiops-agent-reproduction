@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from super_ai.aiops.planning import (
     ReportDraft,
     SearchLogQueryDefaults,
     StepArgumentsDraft,
+    _catalog_payload,  # pyright: ignore[reportPrivateUsage]
     create_validated_plan,
     find_search_log_tool,
     normalize_search_log_arguments,
@@ -31,7 +33,11 @@ from super_ai.aiops.reporting import (
     validate_report,
 )
 from super_ai.aiops.router import map_job_event_to_sse
-from super_ai.aiops.runtime import _latest_query_artifact  # pyright: ignore[reportPrivateUsage]
+from super_ai.aiops.runtime import (
+    _latest_query_artifact,  # pyright: ignore[reportPrivateUsage]
+    _model_context,  # pyright: ignore[reportPrivateUsage]
+    _step_argument_context,  # pyright: ignore[reportPrivateUsage]
+)
 from super_ai.aiops.tool_adapters import (
     adapt_allowed_tool_output,
     inject_server_provided_arguments,
@@ -415,6 +421,133 @@ def test_search_log_window_requires_parseable_alert_time() -> None:
     for alert in ({}, {"startsAt": "not-a-time"}, {"startsAt": "2026-08-23T10:15:00"}):
         with pytest.raises(ValueError):
             search_log_window([alert], defaults)
+
+
+def test_executor_context_uses_minimal_alert_digest() -> None:
+    now = datetime(2026, 10, 18, tzinfo=timezone.utc)
+    alert: dict[str, JsonValue] = {
+        "alertName": "HighError",
+        "service": "checkout",
+        "severity": "critical",
+        "startsAt": "2026-10-18T03:34:11Z",
+        "labels": {
+            "incident_id": "incident-1",
+            "trace_id": "trace-1",
+            "alertname": "HighError",
+            "sop_id": "sop-1",
+        },
+        "annotations": {
+            "summary": "下单失败",
+            "description": "synthetic demo: org.apache.kafka.common.errors.TimeoutException",
+            "rootCause": "下游超时",
+        },
+        "rawContext": {"fingerprint": "raw-secret", "receivers": ["r"]},
+        "fingerprint": "fp-secret",
+        "receivers": [{"name": "r"}],
+    }
+    step_output = DiagnosticEvidenceRecord(
+        id="evidence-step",
+        owner_user_id="owner",
+        diagnostic_task_id="task",
+        diagnostic_step_id="step-1",
+        tool_call_id="call-1",
+        kind="query_artifact",
+        source="TextToSearchLogQuery",
+        title="query",
+        summary="query",
+        content='Query=service:"checkout"',
+        metadata={},
+        observed_at=None,
+        created_at=now,
+    )
+
+    search_context = _step_argument_context([alert], [step_output], current_tool="SearchLog")
+    assert "raw-secret" not in search_context
+    assert "fp-secret" not in search_context
+    assert "receivers" not in search_context
+    assert "checkout" in search_context and "TimeoutException" in search_context
+    # SearchLog 的 Query 已由服务端绑定，不需要重复前序证据。
+    assert "Query=service" not in search_context
+
+    builder_context = _step_argument_context(
+        [alert], [step_output], current_tool="TextToSearchLogQuery"
+    )
+    assert "Query=service" in builder_context
+
+
+def test_planner_context_keeps_full_alert_and_evidence() -> None:
+    now = datetime(2026, 10, 18, tzinfo=timezone.utc)
+    alert: dict[str, JsonValue] = {
+        "alertName": "HighError",
+        "rawContext": {"fingerprint": "fp-1"},
+    }
+    knowledge = DiagnosticEvidenceRecord(
+        id="evidence-sop",
+        owner_user_id="owner",
+        diagnostic_task_id="task",
+        diagnostic_step_id=None,
+        tool_call_id=None,
+        kind="knowledge",
+        source="sop.md",
+        title="SOP",
+        summary="SOP 摘要",
+        content="SOP 正文",
+        metadata={},
+        observed_at=None,
+        created_at=now,
+    )
+
+    context = _model_context([alert], [knowledge])
+
+    assert "rawContext" in context
+    assert "SOP 状态：已获得 SOP 引用" in context
+    assert "evidenceId=evidence-sop" in context
+
+
+def test_executor_context_caps_prior_output() -> None:
+    now = datetime(2026, 10, 18, tzinfo=timezone.utc)
+    step_output = DiagnosticEvidenceRecord(
+        id="evidence-step",
+        owner_user_id="owner",
+        diagnostic_task_id="task",
+        diagnostic_step_id="step-1",
+        tool_call_id="call-1",
+        kind="query_artifact",
+        source="TextToSearchLogQuery",
+        title="query",
+        summary="query",
+        content="x" * 3000,
+        metadata={},
+        observed_at=None,
+        created_at=now,
+    )
+
+    alerts: list[dict[str, JsonValue]] = [{"alertName": "HighError"}]
+    context = _step_argument_context(
+        alerts, [step_output], current_tool="TextToSearchLogQuery"
+    )
+    assert "x" * 2000 in context
+    assert "x" * 2001 not in context
+
+
+def test_catalog_payload_is_standard_json() -> None:
+    descriptor = ToolCapabilityDescriptor(
+        name="SearchLog",
+        description="测试工具",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        capability="log_search",
+        artifact_kind="log_hit",
+        read_only=True,
+        dependencies=(),
+        required_for_profile=True,
+    )
+
+    text = _catalog_payload([descriptor])
+    parsed = json.loads(text)
+
+    assert parsed[0]["name"] == "SearchLog"
+    assert parsed[0]["requiredForProfile"] is True
+    assert "True" not in text and "None" not in text
 
 
 def test_auxiliary_tool_output_becomes_intermediate_artifact() -> None:

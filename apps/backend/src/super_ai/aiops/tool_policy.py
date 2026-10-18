@@ -264,7 +264,21 @@ def describe_builtin_knowledge_tool(tool: BaseTool) -> ToolCapabilityDescriptor:
 
 
 _DESCRIPTION_LIMIT = 600
-_SCHEMA_KEYWORDS = ("type", "description", "enum", "format", "default", "items")
+_SCHEMA_KEYWORDS = (
+    "type",
+    "description",
+    "enum",
+    "format",
+    "default",
+    "items",
+    "minimum",
+    "maximum",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "additionalProperties",
+    "examples",
+)
 
 
 def _model_visible_schema(tool: BaseTool, hidden: frozenset[str]) -> dict[str, JsonValue]:
@@ -290,7 +304,16 @@ def _model_visible_schema(tool: BaseTool, hidden: frozenset[str]) -> dict[str, J
     required: list[JsonValue] = [
         item for item in tool_schema_required(schema) if item not in hidden
     ]
-    return {"type": "object", "properties": properties, "required": required}
+    visible_schema: dict[str, JsonValue] = {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    }
+    if "additionalProperties" in schema:
+        visible_schema["additionalProperties"] = cast(
+            JsonValue, schema["additionalProperties"]
+        )
+    return visible_schema
 
 
 def _visible_property(raw: dict[str, JsonValue]) -> JsonValue:

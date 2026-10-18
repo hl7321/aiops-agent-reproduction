@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -356,7 +357,10 @@ class QwenDiagnosticModel:
                         "若检索到多份 SOP，先判断哪一份与当前告警是同一类故障，只参考那一份。\n"
                         "3. 从工具清单里选工具。清单里有名字的才能用，工具名必须一字不差照抄。\n"
                         "4. 排好步骤顺序，想清楚这一步的产出后面哪一步要用。\n"
-                        "5. 每一步写一句用途，说清要拿到什么信息、给后面哪一步用。\n"
+                        "5. 每一步写一句用途，说清要拿到什么信息、给后面哪一步用；"
+                        "用途里必须写出执行者需要的业务字段（服务名、logger、异常类型、"
+                        "目标信息），执行者只能看到这一步的用途和最小告警摘要，"
+                        "不会再看到 SOP 全文。\n"
                         "6. 不要填任何工具参数。参数由执行者在那一步真正执行时填，"
                         "你现在写的值一定是凭空猜的，所以不要写。\n"
                         "7. 关于「前后过程」：这个日志平台的检索结果自带链路顺序——同一条故障"
@@ -530,18 +534,22 @@ def is_log_context_tool(name: str) -> bool:
 
 def _catalog_payload(
     catalog: Sequence[ToolCapabilityDescriptor],
-) -> list[dict[str, object]]:
-    return [
-        {
-            "name": item.name,
-            "description": item.description,
-            "inputSchema": item.input_schema,
-            "capability": item.capability,
-            "dependencies": list(item.dependencies),
-            "requiredForProfile": item.required_for_profile,
-        }
-        for item in catalog
-    ]
+) -> str:
+    """工具目录以标准 JSON 文本进入提示词，避免 Python repr 的单引号/None/True。"""
+    return json.dumps(
+        [
+            {
+                "name": item.name,
+                "description": item.description,
+                "inputSchema": item.input_schema,
+                "capability": item.capability,
+                "dependencies": list(item.dependencies),
+                "requiredForProfile": item.required_for_profile,
+            }
+            for item in catalog
+        ],
+        ensure_ascii=False,
+    )
 
 
 def summarize_evidence(evidence: Sequence[DiagnosticEvidenceRecord]) -> str:

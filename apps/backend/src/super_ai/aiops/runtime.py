@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol, TypedDict, cast
@@ -376,7 +377,9 @@ class DiagnosticRuntime:
                     # 每一步执行前由执行者生成该步参数：模型看得到当前工具的完整说明、
                     # 整份计划与前面步骤的真实产出，因此这一步填的是真实值而不是占位符。
                     filled = await self._model.fill_step_arguments(
-                        context=_step_argument_context(task.alerts, evidence),
+                        context=_step_argument_context(
+                            task.alerts, evidence, current_tool=plan_step.tool_name
+                        ),
                         tool=descriptor,
                         plan=task.current_plan,
                         step=plan_step,
@@ -992,23 +995,67 @@ def _model_context(
     )
 
 
+EXECUTOR_CONTEXT_CHAR_LIMIT = 2000
+
+
+def _alert_digest(alerts: Sequence[dict[str, JsonValue]]) -> list[dict[str, JsonValue]]:
+    """提取执行所需的告警摘要，去掉与填参无关的原始上下文。
+
+    执行者需要知道"查谁、查什么异常、什么时候"，但不需要 rawContext、
+    fingerprint、receivers 这类展示/追踪字段。
+    """
+    digest: list[dict[str, JsonValue]] = []
+    for alert in alerts:
+        raw_labels = alert.get("labels")
+        labels = raw_labels if isinstance(raw_labels, dict) else {}
+        raw_annotations = alert.get("annotations")
+        annotations = raw_annotations if isinstance(raw_annotations, dict) else {}
+        label_subset: dict[str, JsonValue] = {}
+        for key in ("incident_id", "trace_id", "alertname", "sop_id"):
+            value = labels.get(key)
+            if value is not None:
+                label_subset[key] = cast(JsonValue, value)
+        digest.append(
+            {
+                "alertName": alert.get("alertName"),
+                "service": alert.get("service"),
+                "severity": alert.get("severity"),
+                "startsAt": alert.get("startsAt"),
+                "labels": label_subset,
+                "summary": str(annotations.get("summary", ""))[:500],
+                "description": str(annotations.get("description", ""))[:500],
+                "rootCause": str(annotations.get("rootCause", ""))[:500],
+            }
+        )
+    return digest
+
+
+def _latest_step_output(evidence: Sequence[DiagnosticEvidenceRecord]) -> str | None:
+    """只取上一步的真实产出，不使用知识库证据，并限制长度。"""
+    for item in reversed(evidence):
+        if item.kind == "alert" or item.diagnostic_step_id is None:
+            continue
+        content = item.content.strip()
+        if content:
+            return content[:EXECUTOR_CONTEXT_CHAR_LIMIT]
+    return None
+
+
 def _step_argument_context(
     alerts: Sequence[dict[str, JsonValue]],
     evidence: Sequence[DiagnosticEvidenceRecord],
+    *,
+    current_tool: str,
 ) -> str:
-    """执行者填参用的上下文：告警原文 + 前面步骤的真实完整产出。
+    """执行者填参用的最小上下文。
 
-    这里刻意使用 evidence 的 `content` 而不是 `summary`：跨步参数必须原样搬运，
-    被摘要截断的值抄过去就是废的。
+    工具说明与整份计划由提示词单独提供；这里只补告警摘要与当前步骤需要的上一步产出。
+    SearchLog 的 Query/From/To/Region/TopicId 均由服务端绑定，因此不需要重复证据。
     """
-    outputs = "\n".join(
-        f"- 来自「{item.source}」的产出（{item.kind}）：{item.content}"
-        for item in evidence
-        if item.kind != "alert"
-    )
+    output = None if current_tool == "SearchLog" else _latest_step_output(evidence)
     return (
-        f"告警原文：{list(alerts)}\n"
-        f"前面步骤的真实产出：\n{outputs or '（还没有任何产出）'}"
+        f"告警摘要：{json.dumps(_alert_digest(alerts), ensure_ascii=False)}\n"
+        f"当前步骤需要的前序产出：{output or '（无）'}"
     )
 
 

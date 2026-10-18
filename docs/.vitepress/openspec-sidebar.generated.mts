@@ -11,7 +11,12 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": []
+    "items": [
+      {
+        "text": "slim-aiops-execution-context",
+        "link": "/changes/active/slim-aiops-execution-context/"
+      }
+    ]
   },
   {
     "text": "已归档变更",
