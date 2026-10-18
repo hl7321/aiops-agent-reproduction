@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- [slim-aiops-execution-context](./active/slim-aiops-execution-context/)
+- 无
 
 ## 已归档变更
 
@@ -43,6 +43,7 @@
 - [2026-09-19-support-independent-chat-model-endpoint](./archive/2026-09-19-support-independent-chat-model-endpoint/)
 - [2026-10-18-fix-aiops-deterministic-log-window](./archive/2026-10-18-fix-aiops-deterministic-log-window/)
 - [2026-10-18-fix-aiops-report-claim-contract](./archive/2026-10-18-fix-aiops-report-claim-contract/)
+- [2026-10-18-slim-aiops-execution-context](./archive/2026-10-18-slim-aiops-execution-context/)
 
 ## 主规格
 
