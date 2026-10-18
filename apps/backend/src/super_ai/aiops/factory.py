@@ -94,6 +94,8 @@ def create_configured_aiops_handler_factory(
                 search_log_defaults=SearchLogQueryDefaults(
                     cls_log_upload_settings.region,
                     cls_log_upload_settings.topic_id,
+                    window_before_minutes=cls_log_upload_settings.window_before_minutes,
+                    window_after_minutes=cls_log_upload_settings.window_after_minutes,
                 ),
             )
             await runtime.handler()(context, payload)

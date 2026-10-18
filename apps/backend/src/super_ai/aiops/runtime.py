@@ -40,6 +40,7 @@ from super_ai.aiops.planning import (
     is_search_log_tool,
     normalize_search_log_arguments,
     require_plan_step_at,
+    search_log_window,
     summarize_evidence,
 )
 from super_ai.aiops.reporting import build_fallback_report, validate_report
@@ -407,6 +408,7 @@ class DiagnosticRuntime:
                     elif is_search_log_tool(plan_step.tool_name):
                         if self._search_log_defaults is None:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")
+                        window = search_log_window(task.alerts, self._search_log_defaults)
                         proposed = dict(candidate_arguments)
                         query_artifact = _latest_query_artifact(evidence)
                         if search_query_override is not None:
@@ -417,6 +419,7 @@ class DiagnosticRuntime:
                             proposed,
                             schema=_tool_schema(tool),
                             defaults=self._search_log_defaults,
+                            window=window,
                         )
                         invocation_arguments = cast(
                             dict[str, JsonValue],

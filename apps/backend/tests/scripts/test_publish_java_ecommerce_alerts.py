@@ -4,7 +4,7 @@ import importlib
 import json
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -173,3 +173,66 @@ with patch('urllib.request.urlopen', side_effect=AssertionError('network')):
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
     assert result.stderr == ""
+
+
+def test_active_days_extends_alert_lifetime() -> None:
+    module = _publisher()
+    transport = _FakeTransport()
+    starts_at = datetime(2026, 8, 23, 8, 0, tzinfo=timezone.utc)
+
+    module.publish_java_alerts(
+        "http://127.0.0.1:9093",
+        confirmed=True,
+        timeout_seconds=10,
+        transport=transport,
+        now=starts_at,
+        active_for=timedelta(days=30),
+    )
+
+    payload = json.loads(transport.calls[0]["body"])
+    assert payload[0]["startsAt"] == "2026-08-23T08:00:00Z"
+    assert payload[0]["endsAt"] == "2026-09-22T08:00:00Z"
+
+
+def test_ensure_skips_when_ten_alerts_are_already_active() -> None:
+    module = _publisher()
+    transport = _FakeTransport(body=json.dumps([{} for _ in range(10)]).encode("utf-8"))
+
+    result = module.publish_java_alerts(
+        "http://127.0.0.1:9093",
+        confirmed=True,
+        timeout_seconds=10,
+        transport=transport,
+        ensure=True,
+    )
+
+    assert result.skipped is True
+    assert result.count == 0
+    assert [call["method"] for call in transport.calls] == ["GET"]
+
+
+def test_ensure_publishes_when_alerts_are_missing() -> None:
+    module = _publisher()
+    transport = _FakeTransport(body=b"[]")
+
+    result = module.publish_java_alerts(
+        "http://127.0.0.1:9093",
+        confirmed=True,
+        timeout_seconds=10,
+        transport=transport,
+        ensure=True,
+    )
+
+    assert result.skipped is False
+    assert result.count == 10
+    assert [call["method"] for call in transport.calls] == ["GET", "POST"]
+
+
+def test_starts_at_requires_timezone() -> None:
+    module = _publisher()
+
+    assert module._parse_starts_at("2026-08-23T08:00:00Z") == datetime(
+        2026, 8, 23, 8, 0, tzinfo=timezone.utc
+    )
+    with pytest.raises(module.AlertPublishError, match="必须包含时区"):
+        module._parse_starts_at("2026-08-23T08:00:00")

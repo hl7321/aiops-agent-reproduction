@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Protocol, cast
 
 from langchain_core.language_models import BaseChatModel
@@ -31,6 +32,38 @@ MAX_STEP_ATTEMPTS = 2
 class SearchLogQueryDefaults:
     region: str
     topic_id: str
+    window_before_minutes: int = 15
+    window_after_minutes: int = 0
+
+
+def search_log_window(
+    alerts: Sequence[Mapping[str, object]],
+    defaults: SearchLogQueryDefaults,
+) -> tuple[int, int]:
+    """以告警时间为锚点计算日志窗口，单位毫秒。
+
+    时间窗是服务端可确定计算的事实，不再交给模型。任何一条告警缺少可解析的
+    startsAt 都直接失败，避免悄悄用一个猜测值让诊断"看起来成功"。
+    """
+    starts: list[datetime] = []
+    for alert in alerts:
+        raw = alert.get("startsAt")
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError("告警缺少 startsAt，无法计算日志时间窗")
+        try:
+            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError("告警 startsAt 不是可解析的时间") from error
+        if parsed.tzinfo is None:
+            raise ValueError("告警 startsAt 必须包含时区")
+        starts.append(parsed.astimezone(timezone.utc))
+    if not starts:
+        raise ValueError("没有可用告警，无法计算日志时间窗")
+    window_from = min(starts) - timedelta(minutes=defaults.window_before_minutes)
+    window_to = max(starts) + timedelta(minutes=defaults.window_after_minutes)
+    if window_from >= window_to:
+        raise ValueError("日志时间窗为空，请检查窗口配置")
+    return int(window_from.timestamp() * 1000), int(window_to.timestamp() * 1000)
 
 
 def normalize_search_log_arguments(
@@ -38,10 +71,11 @@ def normalize_search_log_arguments(
     *,
     schema: Mapping[str, object],
     defaults: SearchLogQueryDefaults,
+    window: tuple[int, int],
 ) -> dict[str, JsonValue]:
     """把模型参数收敛到服务端权威范围。
 
-    这里只做两件事：注入服务端权威字段（Region/TopicId），以及按官方 schema 过滤非法键。
+    这里只做两件事：注入服务端权威字段（Region/TopicId/From/To），以及按官方 schema 过滤非法键。
     别名映射、默认时间窗、默认查询、秒级换算与时间窗重置都已删除——它们的作用是替模型
     猜错买单，让参数错误失去反馈。参数是否合法由官方 schema 校验决定；不合法就直接报错，
     由纠错路径把完整参数说明和字段错误交回模型修正。
@@ -61,6 +95,11 @@ def normalize_search_log_arguments(
         normalized["Region"] = region
     if "TopicId" in allowed:
         normalized["TopicId"] = topic_id
+    window_from, window_to = window
+    if "From" in allowed:
+        normalized["From"] = window_from
+    if "To" in allowed:
+        normalized["To"] = window_to
 
     required = tool_schema_required(schema)
     missing = [key for key in required if key not in normalized]

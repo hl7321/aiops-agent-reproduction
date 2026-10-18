@@ -51,6 +51,11 @@ from super_ai.tenancy.context import CurrentUser
 # 新契约下模型必须自己给出合法的毫秒时间窗：默认值填充与单位换算都已删除，
 # 因此测试替身也要像"看得见完整参数说明的模型"那样把参数填全。
 VALID_TIME_WINDOW: dict[str, int] = {"From": 1_787_479_000_000, "To": 1_787_480_100_000}
+# 时间窗现在由告警 startsAt 决定；测试告警必须带一个可解析的带时区时间。
+TEST_ALERT: dict[str, JsonValue] = {
+    "alertName": "HighError",
+    "startsAt": "2026-08-23T10:15:00Z",
+}
 
 # 恢复类用例直接写入历史计划，参数同样要满足新契约（完整键名 + 毫秒时间窗）。
 PLAN_ARGS: dict[str, JsonValue] = {"Query": "error", **VALID_TIME_WINDOW}
@@ -119,6 +124,7 @@ class FakeResolver:
             Query: str,
             Region: str,
             TopicId: str = "",
+            Limit: int = 10,
         ) -> object:
             """查询真实测试边界日志。"""
             self.arguments.append(
@@ -261,12 +267,10 @@ class RepairingModel(FakeModel):
             return StepArgumentsDraft(arguments={"Text": "查询告警日志"})
         self.search_fills += 1
         if self.search_fills == 1:
-            # 首次给出类型错误的时间窗：校验不再静默换算，错误会带着字段路径回到执行者。
-            return StepArgumentsDraft(
-                arguments={"From": "not-a-number", "To": VALID_TIME_WINDOW["To"]}
-            )
+            # 首次给出类型错误的 Limit：From/To 已由服务端注入，只测模型仍负责的字段。
+            return StepArgumentsDraft(arguments={"Limit": "not-a-number"})
         self.validation_errors = (previous_error or "",)
-        return StepArgumentsDraft(arguments=dict(VALID_TIME_WINDOW))
+        return StepArgumentsDraft(arguments={"Limit": 10})
 
 
 class EmptyThenCorrelatedResolver(FakeResolver):
@@ -350,7 +354,7 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
                 )
             )
             diagnostics = SqliteDiagnosticRepository(session)
-            task = await diagnostics.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await diagnostics.create_task("owner", None, [TEST_ALERT])
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner",
                 NewBackgroundJob(
@@ -381,7 +385,7 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
         assert order == ["knowledge", "mcp"]
         assert resolver.arguments == [
             {
-                "From": 1_787_479_000_000,
+                "From": 1_787_479_200_000,
                 "To": 1_787_480_100_000,
                 # Query 由执行者从 query-builder 的真实产出确定性绑定，不是模型复述。
                 "Query": 'service:"checkout"',
@@ -440,7 +444,7 @@ async def test_fallback_without_log_hits_keeps_insufficient_evidence_code(
                 )
             )
             diagnostics = SqliteDiagnosticRepository(session)
-            task = await diagnostics.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await diagnostics.create_task("owner", None, [TEST_ALERT])
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner",
                 NewBackgroundJob(
@@ -501,7 +505,7 @@ async def test_executor_repairs_pydantic_input_and_audits_both_attempts(
                 )
             )
             repository = SqliteDiagnosticRepository(session)
-            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.create_task("owner", None, [TEST_ALERT])
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
             )
@@ -542,7 +546,7 @@ async def test_executor_repairs_pydantic_input_and_audits_both_attempts(
             "failed",
             "completed",
         ]
-        assert model.validation_errors and "From" in model.validation_errors[0]
+        assert model.validation_errors and "Limit" in model.validation_errors[0]
         assert "input_value" not in model.validation_errors[0]
     finally:
         await runtime.close()
@@ -624,7 +628,7 @@ async def test_failed_search_step_persists_readable_redacted_reason(tmp_path: Pa
                 )
             )
             task = await SqliteDiagnosticRepository(session).create_task(
-                "owner", None, [{"alertName": "HighError"}]
+                "owner", None, [TEST_ALERT]
             )
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
@@ -688,7 +692,13 @@ async def test_empty_search_widens_to_owner_alert_correlation_identifier(
             task = await repository.create_task(
                 "owner",
                 None,
-                [{"alertName": "HighError", "labels": {"incident_id": "incident-1"}}],
+                [
+                    {
+                        "alertName": "HighError",
+                        "startsAt": "2026-08-23T10:15:00Z",
+                        "labels": {"incident_id": "incident-1"},
+                    }
+                ],
             )
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
@@ -746,7 +756,7 @@ async def test_missing_search_log_fails_before_planner_model(tmp_path: Path) -> 
                 )
             )
             repository = SqliteDiagnosticRepository(session)
-            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.create_task("owner", None, [TEST_ALERT])
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner",
                 NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id}),
@@ -795,7 +805,7 @@ async def test_sop_failure_emits_failed_tool_event_and_redacts_secret(tmp_path: 
                 )
             )
             task = await SqliteDiagnosticRepository(session).create_task(
-                "owner", None, [{"alertName": "HighError"}]
+                "owner", None, [TEST_ALERT]
             )
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
@@ -859,7 +869,7 @@ async def test_restore_ignores_checkpoint_from_previous_plan_version(tmp_path: P
                 )
             )
             repository = SqliteDiagnosticRepository(session)
-            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.create_task("owner", None, [TEST_ALERT])
             task = await repository.save_plan(
                 "owner",
                 task.id,
@@ -924,7 +934,7 @@ async def test_restore_continues_attempt_sequence_without_reusing_attempt_one(
                 )
             )
             repository = SqliteDiagnosticRepository(session)
-            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.create_task("owner", None, [TEST_ALERT])
             task = await repository.save_plan(
                 "owner",
                 task.id,
@@ -996,7 +1006,7 @@ async def test_exhausted_required_search_attempts_persist_failed_explanation(
                 )
             )
             repository = SqliteDiagnosticRepository(session)
-            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.create_task("owner", None, [TEST_ALERT])
             task = await repository.save_plan(
                 "owner",
                 task.id,
@@ -1403,7 +1413,7 @@ async def test_failed_step_does_not_stop_the_remaining_plan(tmp_path: Path) -> N
                 )
             )
             repository = SqliteDiagnosticRepository(session)
-            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.create_task("owner", None, [TEST_ALERT])
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
             )
@@ -1576,7 +1586,7 @@ async def test_verified_evidence_marks_task_succeeded(tmp_path: Path) -> None:
                 )
             )
             repository = SqliteDiagnosticRepository(session)
-            task = await repository.create_task("owner", None, [{"alertName": "HighError"}])
+            task = await repository.create_task("owner", None, [TEST_ALERT])
             job = await SqliteBackgroundJobStore(session).enqueue(
                 "owner", NewBackgroundJob(kind="aiops_diagnosis", payload={"taskId": task.id})
             )

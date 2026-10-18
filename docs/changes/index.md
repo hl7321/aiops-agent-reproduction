@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- 无
+- [fix-aiops-deterministic-log-window](./active/fix-aiops-deterministic-log-window/)
 
 ## 已归档变更
 

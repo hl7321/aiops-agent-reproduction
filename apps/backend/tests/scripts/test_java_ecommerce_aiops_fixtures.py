@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import ModuleType
 
 import pytest
@@ -78,6 +78,12 @@ def test_generated_payloads_keep_correlation_and_are_synthetic() -> None:
 
     assert len(logs) == 40
     assert len(alerts) == len(sops) == 10
+    log_times = [
+        datetime.fromisoformat(log["timestamp"].replace("Z", "+00:00")) for log in logs
+    ]
+    # 第一套的 flow 起点在 T−9 分钟再往前 15 秒；最后一条日志正好落在 T。
+    assert min(log_times) == now - timedelta(minutes=9, seconds=15)
+    assert max(log_times) == now
     for index, (incident, alert, sop) in enumerate(
         zip(module.JAVA_ECOMMERCE_INCIDENTS, alerts, sops, strict=True)
     ):

@@ -71,6 +71,9 @@ class ClsLogUploadSettings(BaseModel):
     topic_id: str = Field(default="", alias="topicId")
     secret_id: str = Field(default="", alias="secretId")
     secret_key: str = Field(default="", alias="secretKey")
+    # 诊断日志时间窗：以告警 startsAt 为锚点，向前/向后各展开多少分钟。
+    window_before_minutes: int = Field(default=15, alias="windowBeforeMinutes", ge=0, le=1440)
+    window_after_minutes: int = Field(default=0, alias="windowAfterMinutes", ge=0, le=1440)
 
     def require_upload_ready(self) -> ClsLogUploadSettings:
         values = (self.endpoint, self.region, self.topic_id, self.secret_id, self.secret_key)

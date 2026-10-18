@@ -1,3 +1,5 @@
+from typing import cast
+
 from langchain_core.tools import tool
 
 from super_ai.aiops.tool_policy import (
@@ -54,6 +56,31 @@ def test_unknown_or_side_effect_tool_is_not_executable() -> None:
             raise AssertionError("未登记工具不得进入 AIOps Executor")
 
 
+def test_search_log_hides_server_time_window_from_model_schema() -> None:
+    """From/To 由服务端按告警时间注入，模型可见说明与必填列表都不应出现。"""
+
+    @tool("SearchLog")
+    def search_log(
+        From: float,
+        To: float,
+        Query: str,
+        Region: str = "",
+        TopicId: str = "",
+        Limit: int = 10,
+    ) -> dict[str, str]:
+        """测试 SearchLog。"""
+        return {"ok": "1"}
+
+    registry = build_aiops_tool_registry((search_log,), policy=DEFAULT_AIOPS_TOOL_POLICY)
+    descriptor = registry.catalog[0]
+    properties = cast(dict[str, object], descriptor.input_schema["properties"])
+    required = cast(list[str], descriptor.input_schema["required"])
+
+    assert set(properties) == {"Query", "Limit"}
+    assert "From" not in required and "To" not in required
+    assert visible_argument_names(descriptor) == frozenset({"Query", "Limit"})
+
+
 def test_restored_plan_fails_if_previously_allowed_tool_disappeared() -> None:
     original = build_aiops_tool_registry(
         (_tool_named("SearchLog"), _tool_named("DescribeTopics")),
@@ -89,13 +116,11 @@ def test_catalog_hides_server_provided_fields_and_keeps_field_constraints() -> N
     registry = build_aiops_tool_registry((search,))
     schema = registry.catalog[0].input_schema
     assert schema["properties"] == {
-        "From": {"type": "number", "description": "起始时间，毫秒时间戳"},
-        "To": {"type": "number", "description": "结束时间，毫秒时间戳"},
         "Query": {"type": "string", "description": "检索语句"},
         "Limit": {"type": "number", "default": 10, "description": "返回条数，1-100"},
     }
     # 服务端注入的字段同时从必填列表移除，避免出现"必填但看不见"
-    assert schema["required"] == ["From", "To", "Query"]
+    assert schema["required"] == ["Query"]
 
 
 def test_catalog_accepts_official_flat_schema_shape() -> None:
@@ -110,8 +135,6 @@ def test_catalog_accepts_official_flat_schema_shape() -> None:
     }
     registry = build_aiops_tool_registry((search,))
     assert registry.catalog[0].input_schema["properties"] == {
-        "From": {"type": "number", "description": "起始时间"},
-        "To": {"type": "number", "description": "结束时间"},
         "Query": {"type": "string", "description": "检索语句"},
     }
 

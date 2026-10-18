@@ -219,9 +219,16 @@ def build_java_cls_records(region: str, *, now: datetime | None = None) -> tuple
         ("failure", "ERROR", "依赖调用失败并产生本场景异常。"),
         ("recovery", "INFO", "执行有界恢复动作，等待验证指标回归。"),
     )
+    incident_count = len(JAVA_ECOMMERCE_INCIDENTS)
     for incident_index, incident in enumerate(JAVA_ECOMMERCE_INCIDENTS):
         flow_id = f"ctx-{incident.incident_id}"
-        flow_start = base_time + timedelta(minutes=incident_index)
+        # 十套场景依次排在 T−9 ~ T：先故障、后告警，默认
+        # [告警时刻 − 15 分钟, 告警时刻] 窗口才能覆盖全部日志。
+        # 每套四段日志跨 15 秒，所以起点再往前推 15 秒，最后一条正好落在 T。
+        flow_start = base_time - timedelta(
+            minutes=incident_count - 1 - incident_index,
+            seconds=15,
+        )
         for sequence, (phase, level, phase_message) in enumerate(phases, start=1):
             timestamp = (flow_start + timedelta(seconds=(sequence - 1) * 5)).isoformat()
             record = {

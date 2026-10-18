@@ -11,7 +11,12 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": []
+    "items": [
+      {
+        "text": "fix-aiops-deterministic-log-window",
+        "link": "/changes/active/fix-aiops-deterministic-log-window/"
+      }
+    ]
   },
   {
     "text": "已归档变更",

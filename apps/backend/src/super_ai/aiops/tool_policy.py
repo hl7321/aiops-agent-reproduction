@@ -133,7 +133,8 @@ DEFAULT_AIOPS_TOOL_POLICY: tuple[AiopsToolPolicyEntry, ...] = (
         "log_hit",
         True,
         required_for_profile=True,
-        server_provided_arguments=("Region", "TopicId"),
+        # From/To 由服务端按告警时间与窗口配置计算，模型只填 Query/Limit 等字段。
+        server_provided_arguments=("Region", "TopicId", "From", "To"),
         # Topics 与 TopicId 表达同一件事，而 TopicId 由服务端注入。
         unsupported_arguments=("Topics",),
     ),

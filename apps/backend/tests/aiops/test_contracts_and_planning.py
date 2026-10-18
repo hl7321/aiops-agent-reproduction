@@ -19,6 +19,7 @@ from super_ai.aiops.planning import (
     create_validated_plan,
     find_search_log_tool,
     normalize_search_log_arguments,
+    search_log_window,
     validate_plan,
 )
 from super_ai.aiops.reporting import (
@@ -303,10 +304,11 @@ def test_search_log_arguments_only_inject_server_authoritative_fields() -> None:
         },
         schema=schema,
         defaults=SearchLogQueryDefaults(region="ap-guangzhou", topic_id="topic-real"),
+        window=(1_787_479_200_000, 1_787_480_100_000),
     )
 
     assert normalized == {
-        "From": 1_787_476_500_000,
+        "From": 1_787_479_200_000,
         "To": 1_787_480_100_000,
         "Query": "trace_id:4a0001",
         "TopicId": "topic-real",
@@ -319,6 +321,7 @@ def test_search_log_arguments_only_inject_server_authoritative_fields() -> None:
             {"Query": "*"},
             schema=schema,
             defaults=SearchLogQueryDefaults(region="", topic_id=""),
+            window=(1_787_479_200_000, 1_787_480_100_000),
         )
 
 
@@ -341,11 +344,12 @@ def test_search_log_arguments_reject_lowercase_alias_keys() -> None:
             {"query": 'trace_id:"trace-1"'},
             schema=schema,
             defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            window=(1_787_479_200_000, 1_787_480_100_000),
         )
 
 
-def test_search_log_arguments_keep_model_time_units_untouched() -> None:
-    """秒级换算已删除：官方 schema 写明单位是毫秒，模型填错应当失败而不是被偷偷换算。"""
+def test_search_log_arguments_inject_server_time_window() -> None:
+    """From/To 是服务端事实：模型填什么都以告警时间计算的窗口为准。"""
     schema = {
         "From": {"type": "number"},
         "To": {"type": "number"},
@@ -356,13 +360,14 @@ def test_search_log_arguments_keep_model_time_units_untouched() -> None:
         {"From": 1_787_472_000, "To": 1_787_480_100, "Query": "*"},
         schema=schema,
         defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+        window=(1_787_479_200_000, 1_787_480_100_000),
     )
-    assert normalized["From"] == 1_787_472_000
-    assert normalized["To"] == 1_787_480_100
+    assert normalized["From"] == 1_787_479_200_000
+    assert normalized["To"] == 1_787_480_100_000
 
 
-def test_search_log_arguments_do_not_reset_stale_time_window() -> None:
-    """时间窗重置已删除：窗口是否合法交由 SearchLogInput 的 from<to 业务校验判定。"""
+def test_search_log_arguments_override_stale_model_window() -> None:
+    """模型给出的旧时间窗会被服务端窗口覆盖。"""
     schema = {
         "From": {"type": "number"},
         "To": {"type": "number"},
@@ -373,9 +378,43 @@ def test_search_log_arguments_do_not_reset_stale_time_window() -> None:
         {"From": 1_724_486_988, "To": 1_724_494_188, "Query": "*"},
         schema=schema,
         defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+        window=(1_787_479_200_000, 1_787_480_100_000),
     )
-    assert normalized["From"] == 1_724_486_988
-    assert normalized["To"] == 1_724_494_188
+    assert normalized["From"] == 1_787_479_200_000
+    assert normalized["To"] == 1_787_480_100_000
+
+
+def test_search_log_window_uses_alert_time_and_config() -> None:
+    defaults = SearchLogQueryDefaults(
+        "ap-guangzhou", "topic-real", window_before_minutes=15, window_after_minutes=0
+    )
+    window_from, window_to = search_log_window(
+        [{"startsAt": "2026-08-23T10:15:00Z"}], defaults
+    )
+
+    assert window_from == 1_787_479_200_000
+    assert window_to == 1_787_480_100_000
+
+
+def test_search_log_window_covers_all_alerts() -> None:
+    defaults = SearchLogQueryDefaults("ap-guangzhou", "topic-real")
+    window_from, window_to = search_log_window(
+        [
+            {"startsAt": "2026-08-23T10:15:00Z"},
+            {"startsAt": "2026-08-23T10:00:00Z"},
+        ],
+        defaults,
+    )
+
+    assert window_from == 1_787_478_300_000  # 09:45:00Z
+    assert window_to == 1_787_480_100_000  # 10:15:00Z
+
+
+def test_search_log_window_requires_parseable_alert_time() -> None:
+    defaults = SearchLogQueryDefaults("ap-guangzhou", "topic-real")
+    for alert in ({}, {"startsAt": "not-a-time"}, {"startsAt": "2026-08-23T10:15:00"}):
+        with pytest.raises(ValueError):
+            search_log_window([alert], defaults)
 
 
 def test_auxiliary_tool_output_becomes_intermediate_artifact() -> None:

@@ -166,6 +166,52 @@ def test_cls_placeholders_load_but_upload_readiness_requires_safe_complete_confi
         settings.require_upload_ready()
 
 
+def test_cls_log_upload_window_defaults_and_overrides(tmp_path: Path) -> None:
+    base = {
+        "endpoint": "",
+        "region": "",
+        "logsetId": "",
+        "topicId": "",
+        "secretId": "",
+        "secretKey": "",
+    }
+    project, user = _paths(tmp_path, {"clsLogUpload": base})
+    settings = load_cls_log_upload_settings(project, user)
+    assert (settings.window_before_minutes, settings.window_after_minutes) == (15, 0)
+
+    override_dir = tmp_path / "override"
+    override_dir.mkdir()
+    project, user = _paths(
+        override_dir,
+        {
+            "clsLogUpload": {
+                **base,
+                "windowBeforeMinutes": 30,
+                "windowAfterMinutes": 5,
+            }
+        },
+    )
+    settings = load_cls_log_upload_settings(project, user)
+    assert (settings.window_before_minutes, settings.window_after_minutes) == (30, 5)
+
+
+@pytest.mark.parametrize("field", ["windowBeforeMinutes", "windowAfterMinutes"])
+def test_cls_log_upload_window_rejects_negative(tmp_path: Path, field: str) -> None:
+    base = {
+        "endpoint": "",
+        "region": "",
+        "logsetId": "",
+        "topicId": "",
+        "secretId": "",
+        "secretKey": "",
+        field: -1,
+    }
+    project, user = _paths(tmp_path, {"clsLogUpload": base})
+
+    with pytest.raises(ProjectConfigError, match="clsLogUpload 配置校验失败"):
+        load_cls_log_upload_settings(project, user)
+
+
 @pytest.mark.parametrize(
     "endpoint",
     [
