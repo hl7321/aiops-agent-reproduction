@@ -145,6 +145,33 @@ class FakeResolver:
         return (_fake_query_builder_tool(), search_log)
 
 
+class EmptySearchResolver:
+    """SearchLog 始终返回空：用于验证"确实没有证据"的失败码分支。"""
+
+    def __init__(self, order: list[str]) -> None:
+        self.order = order
+
+    async def discover(
+        self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
+    ) -> tuple[BaseTool, ...]:
+        assert owner_user_id
+        assert builtin_tool_names == frozenset({"knowledge_retrieval"})
+        self.order.append("mcp")
+
+        @tool("SearchLog")
+        async def search_log(
+            From: float,
+            To: float,
+            Query: str,
+            Region: str,
+            TopicId: str = "",
+        ) -> object:
+            """查询真实测试边界日志（返回空）。"""
+            return {"structuredContent": []}
+
+        return (_fake_query_builder_tool(), search_log)
+
+
 class FakeModel:
     async def plan(
         self,
@@ -373,12 +400,12 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
                 "owner", job.id, after_sequence=0
             )
             cases = await DiagnosisCasePersistor(runtime.session_factory).list("owner")
-        # 报告生成了，但证据不足：任务终态必须表达"未能得出可信结论"，
-        # 而不是因为"报告已生成"就标记成功。
+        # 本轮已拿到真实 log_hit，是报告模型失败才走了兜底：
+        # 任务必须失败，但错误码要说明失败发生在报告阶段，而不是"证据不足"。
         assert saved is not None
         assert saved.status == "failed"
-        assert saved.failure_code == "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE"
-        assert saved.failure_reason is not None and "证据不足" in saved.failure_reason
+        assert saved.failure_code == "SYSTEM_AIOPS_REPORT_GENERATION_FAILED"
+        assert saved.failure_reason is not None and "报告生成失败" in saved.failure_reason
         # 查询步骤产出中间产物，日志检索产出的才是证据。
         assert [item.kind for item in evidence] == ["query_artifact", "log_hit"]
         assert report is not None and report.generation_mode == "fallback"
@@ -389,6 +416,68 @@ async def test_graph_runtime_persists_tool_evidence_checkpoint_and_fallback(
         assert events is not None
         assert cases == []
         assert any("未检索到匹配 SOP" in str(item.data) for item in events)
+    finally:
+        await runtime.close()
+
+
+async def test_fallback_without_log_hits_keeps_insufficient_evidence_code(
+    tmp_path: Path,
+) -> None:
+    """确实没有日志命中时，失败码仍必须是"证据不足"，不能误报成报告生成失败。"""
+    url = f"sqlite+aiosqlite:///{tmp_path / 'no-evidence.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            diagnostics = SqliteDiagnosticRepository(session)
+            task = await diagnostics.create_task("owner", None, [{"alertName": "HighError"}])
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner",
+                NewBackgroundJob(
+                    kind="aiops_diagnosis",
+                    resource_type="diagnostic_task",
+                    resource_id=task.id,
+                    payload={"taskId": task.id},
+                ),
+            )
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge([]),
+            EmptySearchResolver([]),
+            FakeModel(),
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+        async with transaction_scope(runtime.session_factory) as session:
+            repository = SqliteDiagnosticRepository(session)
+            saved = await repository.get_task("owner", task.id)
+            evidence = await repository.list_evidence("owner", task.id)
+            report = await repository.latest_report("owner", task.id)
+
+        assert saved is not None and saved.status == "failed"
+        assert saved.failure_code == "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE"
+        assert saved.failure_reason is not None and "证据不足" in saved.failure_reason
+        assert [item.kind for item in evidence] == ["query_artifact"]
+        assert report is not None and report.generation_mode == "fallback"
+        assert report.trust_state == "insufficient_evidence"
     finally:
         await runtime.close()
 

@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- 无
+- [fix-aiops-report-claim-contract](./active/fix-aiops-report-claim-contract/)
 
 ## 已归档变更
 

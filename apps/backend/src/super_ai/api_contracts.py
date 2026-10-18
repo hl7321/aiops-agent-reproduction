@@ -28,6 +28,7 @@ ErrorCode: TypeAlias = Literal[
     "SYSTEM_ALERT_SOURCES_UNAVAILABLE",
     "SYSTEM_AIOPS_SEARCH_LOG_UNAVAILABLE",
     "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+    "SYSTEM_AIOPS_REPORT_GENERATION_FAILED",
     "SYSTEM_UNAVAILABLE",
 ]
 ErrorCategory: TypeAlias = Literal[
@@ -228,6 +229,14 @@ ERROR_DEFINITIONS: Final[dict[ErrorCode, ErrorDefinition]] = {
         category="system",
         http_status=200,
         default_message="证据不足，未能得出可信结论",
+    ),
+    # 本轮证据评估为 verified_evidence，但报告模型调用或结构校验失败。
+    # 它和"证据不足"分开：任务同样落到 failed，但 failureCode 能说明失败发生在报告阶段。
+    "SYSTEM_AIOPS_REPORT_GENERATION_FAILED": ErrorDefinition(
+        code="SYSTEM_AIOPS_REPORT_GENERATION_FAILED",
+        category="system",
+        http_status=200,
+        default_message="报告生成失败，未能给出可信结论",
     ),
     "SYSTEM_UNAVAILABLE": ErrorDefinition(
         code="SYSTEM_UNAVAILABLE",

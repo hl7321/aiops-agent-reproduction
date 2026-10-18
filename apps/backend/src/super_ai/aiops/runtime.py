@@ -668,6 +668,9 @@ class DiagnosticRuntime:
                 evidence=tuple(evidence),
                 steps=tuple(steps),
             )
+            # 兜底会强制把 verified_evidence 降级；先记住降级前的判断，
+            # 才能在收尾时区分"证据本来就不足"和"证据够、但报告没生成出来"。
+            evidence_sufficient_before_fallback = evaluation.trust_state == "verified_evidence"
             mode = "model"
             uncertainty = False
             evidence_ids: tuple[str, ...] = ()
@@ -744,22 +747,35 @@ class DiagnosticRuntime:
                 # 用专用稳定错误码与系统故障区分，报告与已收集证据链保持可读——
                 # 失败的是"结论可信度"，不是"可观测性"。这里不抛异常：诊断流程本身
                 # 完整跑完了，结论由任务状态表达。
+                report_generation_failed = (
+                    mode == "fallback" and evidence_sufficient_before_fallback
+                )
+                failure_code = (
+                    "SYSTEM_AIOPS_REPORT_GENERATION_FAILED"
+                    if report_generation_failed
+                    else "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE"
+                )
+                failure_reason = (
+                    "报告生成失败，未能给出可信结论"
+                    if report_generation_failed
+                    else "报告已生成，但证据不足，未能得出可信结论"
+                )
                 await self._store.call(
                     "transition_task",
                     owner,
                     task_id,
                     "failed",
-                    failure_code="SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
-                    failure_reason="报告已生成，但证据不足，未能得出可信结论",
+                    failure_code=failure_code,
+                    failure_reason=failure_reason,
                 )
                 await emit(
                     SSE_TASK_STATUS_TYPE,
                     {
                         "taskId": task_id,
                         "status": "failed",
-                        "message": "证据不足，未能得出可信结论",
+                        "message": failure_reason,
                         "progress": 100,
-                        "failureCode": "SYSTEM_AIOPS_INSUFFICIENT_EVIDENCE",
+                        "failureCode": failure_code,
                     },
                 )
                 state = {**state, "route": "end"}

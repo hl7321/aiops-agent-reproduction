@@ -75,6 +75,12 @@ describe("AIOps 诊断共享合同", () => {
       httpStatus: 503,
       defaultMessage: "当前没有可用的日志检索工具",
     });
+    expect(ERROR_DEFINITIONS.SYSTEM_AIOPS_REPORT_GENERATION_FAILED).toEqual({
+      code: "SYSTEM_AIOPS_REPORT_GENERATION_FAILED",
+      category: "system",
+      httpStatus: 200,
+      defaultMessage: "报告生成失败，未能给出可信结论",
+    });
     const event: TaskStatusEvent = {
       id: "event-1",
       sequence: 1,

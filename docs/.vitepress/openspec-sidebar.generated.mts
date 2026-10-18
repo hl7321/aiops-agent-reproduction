@@ -11,7 +11,12 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": []
+    "items": [
+      {
+        "text": "fix-aiops-report-claim-contract",
+        "link": "/changes/active/fix-aiops-report-claim-contract/"
+      }
+    ]
   },
   {
     "text": "已归档变更",

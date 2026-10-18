@@ -7,10 +7,12 @@ import pytest
 from super_ai.aiops.evidence import alert_evidence, normalize_tool_evidence
 from super_ai.aiops.models import DiagnosticEvidenceRecord
 from super_ai.aiops.planning import (
+    CLAIM_KEY_MAX_LENGTH,
     REPORT_SYSTEM_PROMPT,
     PlanDraft,
     PlanStepDraft,
     ReplanDraft,
+    ReportClaimDraft,
     ReportDraft,
     SearchLogQueryDefaults,
     StepArgumentsDraft,
@@ -491,6 +493,80 @@ def test_fallback_report_is_honest() -> None:
                 markdown=markdown.replace("- 风险评估：", "- 风险："),
                 claims=[],
                 uncertainty=True,
+            ),
+            [],
+            alert_count=1,
+        )
+
+
+def test_report_claim_key_is_normalized_instead_of_rejected() -> None:
+    """真实失败场景：模型把 198 字结论写进 claimKey，不能让整份报告作废。"""
+    long_key = "订单事件积压导致消费延迟 " * 16
+    assert len(long_key) > CLAIM_KEY_MAX_LENGTH
+
+    claim = ReportClaimDraft(
+        claimKey=long_key,
+        section="告警根因分析1",
+        evidenceIds=["evidence-1"],
+        uncertain=False,
+    )
+
+    assert len(claim.claim_key) == CLAIM_KEY_MAX_LENGTH
+    assert claim.claim_key == long_key[:CLAIM_KEY_MAX_LENGTH]
+
+
+def test_validate_report_dedupes_normalized_claim_keys() -> None:
+    """截断后重名的两个 claim 必须各自可写链接，且总长度不超过存储上限。"""
+    evidence = _evidence("log-a", "SearchLog", {})
+    markdown, _ = build_fallback_report([{"alertName": "HighError"}], [])
+    repeated = "同一段很长的结论" * 20
+
+    validated, claims, _ = validate_report(
+        ReportDraft(
+            markdown=markdown,
+            claims=[
+                ReportClaimDraft(
+                    claimKey=repeated,
+                    section="告警根因分析1",
+                    evidenceIds=[evidence.id],
+                    uncertain=False,
+                ),
+                ReportClaimDraft(
+                    claimKey=repeated + "补充",
+                    section="告警根因分析1",
+                    evidenceIds=[evidence.id],
+                    uncertain=False,
+                ),
+            ],
+            uncertainty=False,
+        ),
+        [evidence],
+        alert_count=1,
+    )
+
+    assert validated == markdown
+    assert len(claims) == 2
+    assert len({claim.claim_key for claim in claims}) == 2
+    assert all(len(claim.claim_key) <= CLAIM_KEY_MAX_LENGTH for claim in claims)
+    assert claims[1].claim_key.endswith("-2")
+
+
+def test_validate_report_still_rejects_unknown_evidence() -> None:
+    """标识归一化不放行伪造 provenance。"""
+    markdown, _ = build_fallback_report([{"alertName": "HighError"}], [])
+    with pytest.raises(ValueError, match="不存在或越权"):
+        validate_report(
+            ReportDraft(
+                markdown=markdown,
+                claims=[
+                    ReportClaimDraft(
+                        claimKey="伪造证据",
+                        section="告警根因分析1",
+                        evidenceIds=["missing-evidence"],
+                        uncertain=False,
+                    )
+                ],
+                uncertainty=False,
             ),
             [],
             alert_count=1,

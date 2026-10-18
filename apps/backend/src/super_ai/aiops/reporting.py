@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from super_ai.aiops.models import DiagnosticEvidenceRecord, DiagnosticStepRecord
-from super_ai.aiops.planning import ReportClaimDraft, ReportDraft
+from super_ai.aiops.planning import CLAIM_KEY_MAX_LENGTH, ReportClaimDraft, ReportDraft
 from super_ai.project_config import JsonValue
 
 REPORT_HEADINGS = (
@@ -58,7 +58,29 @@ def validate_report(
             raise ValueError("模型报告引用了不存在或越权的证据")
     if any(item.kind != "alert" for item in evidence) and not draft.claims:
         raise ValueError("模型报告关键结论缺少 evidenceIds")
-    return markdown, tuple(draft.claims), draft.uncertainty
+    return markdown, _dedupe_claim_keys(draft.claims), draft.uncertainty
+
+
+def _dedupe_claim_keys(claims: Sequence[ReportClaimDraft]) -> tuple[ReportClaimDraft, ...]:
+    """归一化后的标识可能重名：为后续 claim 追加稳定后缀，保证链接可写入。
+
+    claimKey 在 report_evidence_links 上参与唯一约束，两条不同 claim 若截断成同一个
+    前缀，就必须在落库前区分开；否则同一条证据的第二个链接会撞唯一约束。
+    """
+    used: set[str] = set()
+    normalized: list[ReportClaimDraft] = []
+    for claim in claims:
+        key = claim.claim_key
+        suffix = 2
+        while key in used:
+            marker = f"-{suffix}"
+            key = f"{claim.claim_key[: CLAIM_KEY_MAX_LENGTH - len(marker)]}{marker}"
+            suffix += 1
+        used.add(key)
+        normalized.append(
+            claim if key == claim.claim_key else claim.model_copy(update={"claim_key": key})
+        )
+    return tuple(normalized)
 
 
 def build_fallback_report(

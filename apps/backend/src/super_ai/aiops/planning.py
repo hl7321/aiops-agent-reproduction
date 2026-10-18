@@ -9,7 +9,7 @@ from typing import Protocol, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from super_ai.aiops.models import DiagnosticEvidenceRecord, PlanStep
 from super_ai.aiops.tool_policy import ToolCapabilityDescriptor, normalized_tool_name
@@ -18,6 +18,9 @@ from super_ai.api_contracts import DiagnosticReplanAction
 
 MAX_PLAN_STEPS = 8
 MAX_REPLANS = 3
+# report_evidence_links.claim_key 的存储列是 String(120)。模型契约与存储契约必须共用
+# 同一个上限：此前模型层写 128、存储层是 120，长度问题只会在解析阶段才暴露。
+CLAIM_KEY_MAX_LENGTH = 120
 # 每个计划步骤（按步骤位置计）最多两次尝试：第一次失败后只给一次重试机会。
 # 分类已经把"不值得重试的"拦在一次以内，剩下需要第二次机会的主要是瞬时错误；
 # 同时把最坏情况的调用数压在 8 步 × 2 = 16 次以内。
@@ -121,10 +124,30 @@ class ReplanDraft(BaseModel):
 class ReportClaimDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim_key: str = Field(alias="claimKey", min_length=1, max_length=128)
+    claim_key: str = Field(
+        alias="claimKey",
+        min_length=1,
+        max_length=CLAIM_KEY_MAX_LENGTH,
+        description=(
+            "报告内部的短标识，用于把一条结论与它的证据关联起来；"
+            "写一句很短的概括即可，不要把整段结论或证据原文粘进来。"
+        ),
+    )
     section: str = Field(min_length=1, max_length=200)
     evidence_ids: list[str] = Field(alias="evidenceIds", min_length=1, max_length=50)
     uncertain: bool
+
+    @field_validator("claim_key", mode="before")
+    @classmethod
+    def _normalize_claim_key(cls, value: object) -> object:
+        """超长标识按字符截断，而不是让整份报告在解析阶段失败。
+
+        模型经常把整句结论写进 claimKey；这里是报告内部的关联标识，不是结论正文。
+        截断只影响标识可读性，结论正文仍在 markdown 中。
+        """
+        if not isinstance(value, str):
+            return value
+        return value.strip()[:CLAIM_KEY_MAX_LENGTH]
 
 
 def _empty_report_claims() -> list[ReportClaimDraft]:
@@ -157,7 +180,9 @@ REPORT_SYSTEM_PROMPT = (
     "   - 处理方案段内：已执行步骤： / 建议： / 预期效果：\n"
     "   - 结论段内：整体评估： / 关键发现： / 后续建议： / 风险评估：\n"
     "4. 证据不足时必须在报告中写明不确定性，不得编造根因、日志、指标或工具结果。\n"
-    "5. claims[].evidenceIds 只能引用输入中出现过的证据 ID。\n\n"
+    "5. claims[].evidenceIds 只能引用输入中出现过的证据 ID。\n"
+    "6. claims[].claimKey 是报告内部的短标识（不超过 120 个字符），用来把一条结论和"
+    "它的证据关联起来；写一句很短的概括即可，不要把整段结论或证据原文粘进去。\n\n"
     "【输出结果】\n"
     "输出 markdown，结构必须与下面这份示例完全一致（示例文字只是占位）：\n\n"
     "# 告警分析报告\n\n"
