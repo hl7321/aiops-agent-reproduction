@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Vue 3](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Plan--Execute--Replan-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Plan--Execute-1C3C3C)](https://langchain-ai.github.io/langgraph/)
 [![MCP](https://img.shields.io/badge/MCP-real%20tools-6E56CF)](https://modelcontextprotocol.io/)
 [![OpenSpec](https://img.shields.io/badge/OpenSpec-spec--driven-2563EB)](./openspec)
 
@@ -29,6 +29,9 @@
 
 当时的具体做法**怎么一步步搭起来的**——先做什么、为什么先做它、每一步留下了什么，
 都在 [BUILD-LOG.md](./BUILD-LOG.md) 里，按阶段写着，可以对着代码看。
+
+面向业务和管理视角的产品介绍、完整业务流程、架构图和关键设计问题，见
+[OnCall Agent 产品介绍](./docs/interview/project-harness-overview.md)。
 
 有一点提前说明：**仓库里的日志、告警和知识库文档都是为了演示构造的**，不是线上数据。我按十个典型
 故障模式做了配套的 fixtures（每个场景四条有序日志 + 一条告警 + 一份 SOP 文档），用来把整条链路完整
@@ -52,7 +55,7 @@
 | 认证与隔离 | 本地注册登录、Argon2 密码、可撤销 token；业务数据按 owner / tenant 隔离 |
 | 聊天 | 持久 SSE 流式 Agent，工具调用审计，会话记忆压缩（30 轮 / 70% 触发、95% 熔断） |
 | 知识库 | 文档上传、切片、embedding 入 Milvus；BM25L 与向量双路召回、RRF 融合、rerank 精排 |
-| 智能诊断 | LangGraph 编排 Plan → Execute → Replan：真实日志工具取证、结构化执行总账、证据门禁、诊断报告、案例沉淀 |
+| 智能诊断 | LangGraph 编排 Plan → Execute：真实日志工具取证、结构化执行总账、证据门禁、诊断报告、案例沉淀 |
 | MCP | 官方腾讯云 CLS MCP 的真实连接与工具发现，按用户隔离，超时 / 重试 / 同名冲突都有边界，全程审计脱敏 |
 | 可复现 | 10 套 Java 电商故障 fixtures（日志 + 告警 + SOP），可以完整重放一次真实诊断 |
 
@@ -62,7 +65,7 @@
 flowchart LR
   UI["Vue 3 工作台<br/>/chat /knowledge /aiops /mcp"]
   API["FastAPI + SSE<br/>认证 · 契约 · 持久后台任务"]
-  GRAPH["LangGraph<br/>Plan → Execute → Replan"]
+  GRAPH["LangGraph<br/>Plan → Execute"]
   DB[("SQLite + Alembic")]
   VEC[("Milvus<br/>向量 + 标量过滤")]
   LLM["OpenAI-compatible<br/>chat / embedding / rerank"]
