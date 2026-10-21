@@ -117,10 +117,12 @@ button { color: inherit; }
 .conversation-list__item:hover, .conversation-list__item--active { border-color: var(--color-border); background: white; }
 .conversation-list__item span { overflow: hidden; font-size: 13px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-list__item time { color: var(--color-text-muted); font-size: 10px; }
-.conversation-list__row { display: flex; align-items: stretch; gap: 4px; }
-.conversation-list__item { flex: 1; min-width: 0; }
-.conversation-list__edit { width: 30px; border: 1px solid transparent; border-radius: 8px; display: grid; place-items: center; color: var(--color-text-muted); background: transparent; cursor: pointer; }
-.conversation-list__edit:hover { border-color: var(--color-border); color: var(--color-text); background: white; }
+.conversation-list__row { position: relative; display: flex; align-items: stretch; }
+.conversation-list__item { flex: 1; min-width: 0; padding-right: 34px; }
+.conversation-list__edit { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border: 0; border-radius: 6px; display: grid; place-items: center; color: var(--color-text-muted); background: transparent; cursor: pointer; opacity: 0; transition: opacity 120ms ease, background 120ms ease; }
+.conversation-list__row:hover .conversation-list__edit, .conversation-list__row:focus-within .conversation-list__edit { opacity: 1; }
+.conversation-list__edit:hover { color: var(--color-text); background: var(--color-surface-subtle); }
+@media (hover: none) { .conversation-list__edit { opacity: 1; } }
 .conversation-rename { flex: 1; border: 1px solid var(--color-accent); border-radius: 10px; display: grid; gap: 6px; padding: 8px; background: white; }
 .conversation-rename input { width: 100%; border: 1px solid var(--color-border); border-radius: 7px; padding: 6px 7px; color: var(--color-text); background: var(--color-surface-subtle); font: inherit; font-size: 12px; }
 .conversation-rename__actions { display: flex; gap: 6px; }
