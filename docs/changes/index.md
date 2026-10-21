@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- [fix-chat-memory-controls](./active/fix-chat-memory-controls/)
+- 无
 
 ## 已归档变更
 
@@ -44,6 +44,7 @@
 - [2026-10-18-fix-aiops-deterministic-log-window](./archive/2026-10-18-fix-aiops-deterministic-log-window/)
 - [2026-10-18-fix-aiops-report-claim-contract](./archive/2026-10-18-fix-aiops-report-claim-contract/)
 - [2026-10-18-slim-aiops-execution-context](./archive/2026-10-18-slim-aiops-execution-context/)
+- [2026-10-21-fix-chat-memory-controls](./archive/2026-10-21-fix-chat-memory-controls/)
 
 ## 主规格
 

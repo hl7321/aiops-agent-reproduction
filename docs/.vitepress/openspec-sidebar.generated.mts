@@ -11,12 +11,7 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": [
-      {
-        "text": "fix-chat-memory-controls",
-        "link": "/changes/active/fix-chat-memory-controls/"
-      }
-    ]
+    "items": []
   },
   {
     "text": "已归档变更",
@@ -172,6 +167,10 @@ export const openspecSidebar = [
       {
         "text": "2026-10-18-slim-aiops-execution-context",
         "link": "/changes/archive/2026-10-18-slim-aiops-execution-context/"
+      },
+      {
+        "text": "2026-10-21-fix-chat-memory-controls",
+        "link": "/changes/archive/2026-10-21-fix-chat-memory-controls/"
       }
     ]
   },
