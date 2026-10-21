@@ -74,6 +74,10 @@ async function send(content: string): Promise<void> {
         <ChatComposer :disabled="isStreaming" :on-send="send" />
       </div>
     </div>
-    <ChatConfigurationSidebar />
+    <ChatConfigurationSidebar
+      :sessions="chat.sessions"
+      :selected-session-id="chat.selectedDetail?.session.id ?? null"
+      :on-select-session="chat.selectSession"
+    />
   </section>
 </template>

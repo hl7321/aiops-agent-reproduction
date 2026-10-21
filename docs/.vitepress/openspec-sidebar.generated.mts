@@ -11,7 +11,12 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": []
+    "items": [
+      {
+        "text": "add-chat-summary-panel",
+        "link": "/changes/active/add-chat-summary-panel/"
+      }
+    ]
   },
   {
     "text": "已归档变更",

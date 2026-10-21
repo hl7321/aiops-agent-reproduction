@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
+
+import type { ChatSession } from "@super-ai/api-contracts";
 
 import { useChatConfigurationStore } from "../../stores/chatConfiguration";
 import { useFeedbackStore } from "../../stores/feedback";
+import ChatSummaryPanel from "./ChatSummaryPanel.vue";
+
+const props = defineProps<{
+  sessions: readonly ChatSession[];
+  selectedSessionId: string | null;
+  onSelectSession: (id: string) => Promise<void>;
+}>();
 
 const configuration = useChatConfigurationStore();
 const feedback = useFeedbackStore();
@@ -10,6 +19,12 @@ const promptLabel = ref("");
 const promptContent = ref("");
 const editingPromptId = ref<string | null>(null);
 const errorMessage = ref<string | null>(null);
+const currentPromptLabel = computed(
+  () =>
+    configuration.prompts.find((prompt) => prompt.id === configuration.selectedPromptId)?.label ??
+    "平台默认",
+);
+const selectedSkillCount = computed(() => configuration.selectedSkillIds.length);
 
 async function selectPrompt(event: Event): Promise<void> {
   const value = (event.target as HTMLSelectElement).value || null;
@@ -75,8 +90,13 @@ async function safe(operation: () => Promise<void>): Promise<void> {
 
 <template>
   <aside class="chat-config-sidebar" aria-label="Prompt 与 Skill 设置">
-    <details open>
-      <summary>Prompt</summary>
+    <ChatSummaryPanel
+      :sessions="props.sessions"
+      :selected-session-id="props.selectedSessionId"
+      :on-select="props.onSelectSession"
+    />
+    <details>
+      <summary>Prompt · {{ currentPromptLabel }}</summary>
       <label>当前 Prompt
         <select :value="configuration.selectedPromptId ?? ''" @change="selectPrompt">
           <option value="">平台默认</option>
@@ -96,8 +116,8 @@ async function safe(operation: () => Promise<void>): Promise<void> {
         </li>
       </ul>
     </details>
-    <details open>
-      <summary>Skills</summary>
+    <details>
+      <summary>Skills · {{ selectedSkillCount }} 已选</summary>
       <label class="skill-upload">上传 SKILL.md<input type="file" accept=".md,text/markdown" @change="uploadSkill" /></label>
       <ul class="asset-list">
         <li v-for="skill in configuration.skills" :key="skill.id">

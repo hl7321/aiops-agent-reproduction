@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- 无
+- [add-chat-summary-panel](./active/add-chat-summary-panel/)
 
 ## 已归档变更
 

@@ -138,7 +138,7 @@ button { color: inherit; }
 .route-placeholder h2 { margin: 12px 0; font-size: 28px; letter-spacing: -0.035em; }
 .route-placeholder > p:last-of-type { max-width: 560px; margin: 0; color: var(--color-text-muted); line-height: 1.75; }
 
-.chat-workspace { height: calc(100vh - 74px); min-width: 0; display: grid; grid-template-columns: minmax(560px, 1fr) 320px; overflow: hidden; }
+.chat-workspace { height: calc(100vh - 74px); min-width: 0; display: grid; grid-template-columns: minmax(560px, 1fr) 280px; overflow: hidden; }
 .chat-main { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; background: var(--color-surface); }
 .chat-transcript { min-height: 0; overflow-y: auto; padding: 30px clamp(28px, 5vw, 72px); scroll-behavior: smooth; }
 .chat-message { max-width: 880px; margin: 0 auto 24px; display: grid; gap: 6px; }
@@ -165,10 +165,27 @@ button { color: inherit; }
 .memory-usage { display: flex; align-items: center; gap: 8px; }
 .memory-usage progress { width: 100%; accent-color: var(--color-accent); }
 .memory-controls__compact { min-height: 32px; padding: 0 11px; font-size: 11px; }
-.chat-config-sidebar { min-height: 0; border-left: 1px solid var(--color-border); padding: 20px 16px; overflow-y: auto; background: var(--color-surface-subtle); }
+.chat-config-sidebar { min-height: 0; border-left: 1px solid var(--color-border); padding: 16px 12px; overflow-y: auto; background: var(--color-surface-subtle); }
 .chat-config-sidebar > details { margin-bottom: 14px; border: 1px solid var(--color-border); border-radius: 12px; padding: 12px; background: white; }
 .chat-config-sidebar summary { cursor: pointer; font-size: 13px; font-weight: 800; }
 .chat-config-sidebar details > label { margin-top: 13px; display: grid; gap: 6px; color: var(--color-text-muted); font-size: 11px; }
+.summary-panel { margin-bottom: 14px; border: 1px solid var(--color-border); border-radius: 12px; padding: 12px; background: white; }
+.summary-panel header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.summary-panel h3 { margin: 0; font-size: 13px; font-weight: 800; }
+.summary-panel header small { color: var(--color-text-muted); font-size: 10px; }
+.summary-list { margin-top: 10px; display: grid; gap: 6px; max-height: 180px; overflow-y: auto; }
+.summary-session { width: 100%; border: 1px solid var(--color-border); border-radius: 9px; display: grid; gap: 3px; padding: 8px 9px; color: inherit; text-align: left; background: white; font: inherit; cursor: pointer; }
+.summary-session:hover { border-color: var(--color-border-strong); }
+.summary-session.is-selected { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.summary-session:disabled { opacity: .65; cursor: progress; }
+.summary-session strong { overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.summary-session small { color: var(--color-text-muted); font-size: 10px; }
+.summary-detail { margin-top: 10px; border-top: 1px dashed var(--color-border); padding-top: 10px; }
+.summary-text { max-height: 200px; margin: 0 0 8px; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 11px; line-height: 1.6; }
+.summary-detail dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; font-size: 10px; }
+.summary-detail dt { color: var(--color-text-muted); }
+.summary-detail dd { margin: 0; }
+.summary-panel .muted { margin: 8px 0 0; color: var(--color-text-muted); font-size: 11px; }
 .asset-form { margin-top: 12px; display: grid; gap: 8px; }
 .asset-form textarea { resize: vertical; }
 .asset-form div { display: flex; gap: 7px; }
@@ -219,6 +236,12 @@ button { color: inherit; }
 .feedback-enter-active, .feedback-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
 .feedback-enter-from, .feedback-leave-to { opacity: 0; transform: translateY(8px); }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 980px) {
+  .chat-workspace { height: auto; grid-template-columns: 1fr; overflow: visible; }
+  .chat-main { min-height: 60vh; }
+  .chat-config-sidebar { max-height: 55vh; border-top: 1px solid var(--color-border); border-left: 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }

@@ -18,7 +18,18 @@ describe("ChatConfigurationSidebar", () => {
     store.uploadSkill = vi.fn(async () => undefined);
     store.deletePrompt = vi.fn(async () => undefined);
     store.deleteSkill = vi.fn(async () => undefined);
-    const wrapper = mount(ChatConfigurationSidebar);
+    const wrapper = mount(ChatConfigurationSidebar, {
+      props: {
+        sessions: [],
+        selectedSessionId: null,
+        onSelectSession: vi.fn(async () => undefined),
+      },
+    });
+
+    expect(wrapper.get(".summary-panel").text()).toContain("压缩摘要");
+    expect(wrapper.text()).toContain("Prompt · 平台默认");
+    expect(wrapper.text()).toContain("Skills · 0 已选");
+    expect(wrapper.findAll("details").every((item) => item.attributes("open") === undefined)).toBe(true);
 
     await wrapper.get("select").setValue("prompt-1");
     expect(store.updateSelection).toHaveBeenCalledWith("prompt-1", []);
