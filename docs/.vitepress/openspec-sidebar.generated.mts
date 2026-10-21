@@ -13,8 +13,8 @@ export const openspecSidebar = [
     "text": "进行中的变更",
     "items": [
       {
-        "text": "add-chat-summary-panel",
-        "link": "/changes/active/add-chat-summary-panel/"
+        "text": "add-chat-session-rename-and-structured-summary",
+        "link": "/changes/active/add-chat-session-rename-and-structured-summary/"
       }
     ]
   },
@@ -172,6 +172,10 @@ export const openspecSidebar = [
       {
         "text": "2026-10-18-slim-aiops-execution-context",
         "link": "/changes/archive/2026-10-18-slim-aiops-execution-context/"
+      },
+      {
+        "text": "2026-10-21-add-chat-summary-panel",
+        "link": "/changes/archive/2026-10-21-add-chat-summary-panel/"
       },
       {
         "text": "2026-10-21-fix-chat-memory-controls",
