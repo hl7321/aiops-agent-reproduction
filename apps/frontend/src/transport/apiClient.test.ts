@@ -86,4 +86,39 @@ describe("apiClient", () => {
       "响应不符合共享 API envelope",
     );
   });
+
+  it("为字符串 body 补 JSON Content-Type，且不覆盖显式类型或 FormData", async () => {
+    const seen: Array<{ contentType: string | null }> = [];
+    const client = createApiClient({
+      fetcher: async (_input, init) => {
+        const headers = new Headers(init?.headers);
+        seen.push({ contentType: headers.get("Content-Type") });
+        return new Response(JSON.stringify({
+          ok: true,
+          data: { status: "ok" },
+          meta: { requestId: "req-body" },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      },
+    });
+
+    await client.request<FoundationStatus>("/memory", {
+      method: "PUT",
+      body: JSON.stringify({ memoryMode: "manual" }),
+    });
+    await client.request<FoundationStatus>("/upload", {
+      method: "POST",
+      body: new FormData(),
+    });
+    await client.request<FoundationStatus>("/custom", {
+      method: "PUT",
+      body: "raw",
+      headers: { "Content-Type": "application/merge-patch+json" },
+    });
+
+    expect(seen).toEqual([
+      { contentType: "application/json" },
+      { contentType: null },
+      { contentType: "application/merge-patch+json" },
+    ]);
+  });
 });

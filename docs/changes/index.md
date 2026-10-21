@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- 无
+- [fix-chat-memory-controls](./active/fix-chat-memory-controls/)
 
 ## 已归档变更
 

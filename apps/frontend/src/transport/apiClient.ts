@@ -40,6 +40,11 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   return {
     async request<T>(input: string, init: RequestInit = {}): Promise<ApiResult<T>> {
       const headers = await buildTransportHeaders(init.headers, options, "application/json");
+      // fetch 对字符串 body 默认发 text/plain，FastAPI 不会把它解析成 Pydantic body。
+      // 只对字符串 JSON body 补 Content-Type，FormData/Blob 与显式类型保持原样。
+      if (typeof init.body === "string" && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
       const response = await fetcher(resolveTransportUrl(baseUrl, input), { ...init, headers });
       const payload: unknown = await response.json();
 

@@ -7,11 +7,15 @@ import { createChatClient } from "./chatClient";
 describe("chatClient", () => {
   it("通过公共 ApiClient 调用会话与记忆操作", async () => {
     const calls: Array<{ url: string; method: string; body?: string }> = [];
+    let memoryContentType: string | null = null;
     const api = createApiClient({ fetcher: async (input, init) => {
       calls.push({
         url: String(input), method: init?.method ?? "GET",
         ...(typeof init?.body === "string" ? { body: init.body } : {}),
       });
+      if (String(input).endsWith("/memory")) {
+        memoryContentType = new Headers(init?.headers).get("Content-Type");
+      }
       const deleted = init?.method === "DELETE";
       return new Response(JSON.stringify({
         ok: true,
@@ -50,6 +54,7 @@ describe("chatClient", () => {
       { url: "/chat/sessions/s%2F1/memory:compact", method: "POST" },
       { url: "/chat/sessions/s%2F1", method: "DELETE" },
     ]);
+    expect(memoryContentType).toBe("application/json");
   });
 
   it("通过共享 SseClient 发送 user-only stream 请求并保留事件 sequence", async () => {

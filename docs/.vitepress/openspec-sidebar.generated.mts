@@ -11,7 +11,12 @@ export const openspecSidebar = [
   },
   {
     "text": "进行中的变更",
-    "items": []
+    "items": [
+      {
+        "text": "fix-chat-memory-controls",
+        "link": "/changes/active/fix-chat-memory-controls/"
+      }
+    ]
   },
   {
     "text": "已归档变更",

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 
@@ -279,6 +280,32 @@ async def test_memory_mode_compact_and_owner_scope(chat_database_url: str) -> No
     assert len(compacted.json()["data"]["messages"]) == 2
     assert forbidden.status_code == 403
     assert forbidden.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+
+async def test_memory_http_contract_requires_json_content_type(
+    chat_database_url: str,
+) -> None:
+    """前端共享 client 必须发送 JSON Content-Type；后端只解析 JSON body。"""
+    async with client_for(chat_database_url) as client:
+        headers = await _auth(client, "memory-contract@example.com")
+        created = await client.post("/chat/sessions", headers=headers)
+        session_id = created.json()["data"]["session"]["id"]
+
+        accepted = await client.put(
+            f"/chat/sessions/{session_id}/memory",
+            headers={**headers, "Content-Type": "application/json"},
+            content=json.dumps({"memoryMode": "manual"}),
+        )
+        rejected = await client.put(
+            f"/chat/sessions/{session_id}/memory",
+            headers={**headers, "Content-Type": "text/plain"},
+            content=json.dumps({"memoryMode": "manual"}),
+        )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["data"]["session"]["memoryMode"] == "manual"
+    assert rejected.status_code == 422
+    assert rejected.json()["error"]["code"] == "VALIDATION_REQUEST_INVALID"
 
 
 async def test_chat_api_fails_explicitly_without_model_capability(chat_database_url: str) -> None:
