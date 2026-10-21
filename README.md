@@ -31,7 +31,7 @@
 都在 [BUILD-LOG.md](./BUILD-LOG.md) 里，按阶段写着，可以对着代码看。
 
 面向业务和管理视角的产品介绍、完整业务流程、架构图和关键设计问题，见
-[OnCall Agent 产品介绍](./docs/interview/project-harness-overview.md)。
+[OnCall Agent 产品介绍](./docs/interview/产品介绍.md)。
 
 有一点提前说明：**仓库里的日志、告警和知识库文档都是为了演示构造的**，不是线上数据。我按十个典型
 故障模式做了配套的 fixtures（每个场景四条有序日志 + 一条告警 + 一份 SOP 文档），用来把整条链路完整
