@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { Plus, Trash2 } from "lucide-vue-next";
+import { Pencil, Plus, Trash2 } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
+
+import type { ChatSession } from "@super-ai/api-contracts";
 
 import { useChatStore } from "../../stores/chat";
 
 const chat = useChatStore();
 const deleteCandidate = ref<string | null>(null);
 const busy = ref(false);
+const editingId = ref<string | null>(null);
+const draftTitle = ref("");
+const renameError = ref<string | null>(null);
 
 onMounted(async () => {
   try { await chat.ensureActiveSession(); }
@@ -27,6 +32,40 @@ async function remove(): Promise<void> {
     deleteCandidate.value = null;
   } finally { busy.value = false; }
 }
+
+function startRename(session: ChatSession): void {
+  editingId.value = session.id;
+  draftTitle.value = session.title;
+  renameError.value = null;
+}
+
+function cancelRename(): void {
+  editingId.value = null;
+  draftTitle.value = "";
+  renameError.value = null;
+}
+
+async function saveRename(sessionId: string): Promise<void> {
+  const title = draftTitle.value.trim();
+  if (!title) {
+    renameError.value = "标题不能为空";
+    return;
+  }
+  if (title.length > 128) {
+    renameError.value = "标题最多 128 个字符";
+    return;
+  }
+  busy.value = true;
+  renameError.value = null;
+  try {
+    await chat.renameSession(sessionId, title);
+    cancelRename();
+  } catch (error: unknown) {
+    renameError.value = error instanceof Error ? error.message : "重命名失败";
+  } finally {
+    busy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -39,16 +78,48 @@ async function remove(): Promise<void> {
     </div>
     <p v-if="chat.errorMessage" class="field-error" role="alert">{{ chat.errorMessage }}</p>
     <nav class="conversation-list" aria-label="Chat 会话列表">
-      <button
+      <div
         v-for="session in chat.sessions"
         :key="session.id"
-        type="button"
-        class="conversation-list__item"
-        :class="{ 'conversation-list__item--active': chat.selectedDetail?.session.id === session.id }"
-        @click="chat.selectSession(session.id)"
+        class="conversation-list__row"
       >
-        <span>{{ session.title }}</span><time>{{ new Date(session.updatedAt).toLocaleString("zh-CN") }}</time>
-      </button>
+        <form
+          v-if="editingId === session.id"
+          class="conversation-rename"
+          @submit.prevent="saveRename(session.id)"
+        >
+          <input
+            v-model="draftTitle"
+            :maxlength="128"
+            aria-label="会话标题"
+            @keydown.esc="cancelRename"
+          />
+          <div class="conversation-rename__actions">
+            <button type="submit" :disabled="busy">保存</button>
+            <button type="button" :disabled="busy" @click="cancelRename">取消</button>
+          </div>
+          <p v-if="renameError" class="field-error" role="alert">{{ renameError }}</p>
+        </form>
+        <template v-else>
+          <button
+            type="button"
+            class="conversation-list__item"
+            :class="{ 'conversation-list__item--active': chat.selectedDetail?.session.id === session.id }"
+            @click="chat.selectSession(session.id)"
+          >
+            <span>{{ session.title }}</span><time>{{ new Date(session.updatedAt).toLocaleString("zh-CN") }}</time>
+          </button>
+          <button
+            type="button"
+            class="conversation-list__edit"
+            :disabled="busy"
+            aria-label="重命名会话"
+            @click.stop="startRename(session)"
+          >
+            <Pencil :size="14" aria-hidden="true" />
+          </button>
+        </template>
+      </div>
     </nav>
     <button
       v-if="chat.selectedDetail"

@@ -6,6 +6,7 @@ import type {
   ChatSessionListData,
   ChatStreamMessageRequest,
   UpdateChatMemoryRequest,
+  UpdateChatSessionTitleRequest,
   SseEvent,
 } from "@super-ai/api-contracts";
 
@@ -19,6 +20,10 @@ export interface ChatClient {
   appendMessage(id: string, body: AppendChatMessageRequest): Promise<ApiResult<ChatSessionDetailData>>;
   clearMessages(id: string): Promise<ApiResult<ChatSessionDetailData>>;
   updateMemory(id: string, body: UpdateChatMemoryRequest): Promise<ApiResult<ChatSessionDetailData>>;
+  updateSessionTitle(
+    id: string,
+    body: UpdateChatSessionTitleRequest,
+  ): Promise<ApiResult<ChatSessionDetailData>>;
   compactMemory(id: string): Promise<ApiResult<ChatSessionDetailData>>;
   deleteSession(id: string): Promise<ApiResult<ChatDeleteData>>;
   listToolCallAudits(id: string): Promise<ApiResult<AgentToolCallAuditListData>>;
@@ -40,6 +45,10 @@ export function createChatClient(api: ApiClient, sse: SseClient): ChatClient {
     }),
     updateMemory: (id, body) => api.request<ChatSessionDetailData>(`${path(id)}/memory`, {
       method: "PUT",
+      body: JSON.stringify(body),
+    }),
+    updateSessionTitle: (id, body) => api.request<ChatSessionDetailData>(path(id), {
+      method: "PATCH",
       body: JSON.stringify(body),
     }),
     compactMemory: (id) => api.request<ChatSessionDetailData>(`${path(id)}/memory:compact`, {

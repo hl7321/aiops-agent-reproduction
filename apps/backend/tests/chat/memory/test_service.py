@@ -7,8 +7,10 @@ from langchain_core.messages import BaseMessage
 
 from super_ai.api_responses import AppError
 from super_ai.chat.memory.service import (
+    MEMORY_SUMMARY_HEADINGS,
     ChatMemoryService,
     at_context_limit,
+    normalize_memory_summary,
     should_auto_compact,
 )
 from super_ai.chat_configuration.assembly import ChatAgentConfigurationSnapshot
@@ -18,6 +20,10 @@ from super_ai.memory.extended_sqlite.chat_repositories import SqliteChatReposito
 from super_ai.memory.sqlite import PersistenceRuntime, transaction_scope, upgrade_database
 
 NOW = datetime(2026, 8, 18, tzinfo=timezone.utc)
+STRUCTURED_SUMMARY = "\n".join(
+    f"## {heading}\n- 测试要点" for heading in MEMORY_SUMMARY_HEADINGS
+)
+PERSISTED_SUMMARY = normalize_memory_summary(STRUCTURED_SUMMARY)
 
 
 class FakeConfigurationStore:
@@ -27,7 +33,7 @@ class FakeConfigurationStore:
 
 
 class FakeSummarizer:
-    def __init__(self, result: str | Exception = "摘要") -> None:
+    def __init__(self, result: str | Exception = STRUCTURED_SUMMARY) -> None:
         self.result = result
         self.calls: list[tuple[str | None, tuple[str, ...]]] = []
 
@@ -94,7 +100,7 @@ async def test_context_70_compacts_then_persists_candidate(tmp_path: Path) -> No
         prepared = await service.prepare_candidate("user-a", session_id, "下一问")
 
         assert len(summarizer.calls) == 1
-        assert prepared.projection.detail.session.memory_summary == "摘要"
+        assert prepared.projection.detail.session.memory_summary == PERSISTED_SUMMARY
         assert prepared.projection.detail.session.compacted_message_count == 2
         assert prepared.projection.detail.messages[-1].content == "下一问"
         assert prepared.projection.detail.session.context_tokens == 20
@@ -179,7 +185,7 @@ async def test_auto_compaction_still_rejects_95_without_persisting_candidate(
             detail = await SqliteChatRepository(session).get("user-a", session_id)
         assert detail is not None
         assert [item.content for item in detail.messages] == ["问题 1", "回答 1"]
-        assert detail.session.memory_summary == "摘要"
+        assert detail.session.memory_summary == PERSISTED_SUMMARY
         assert detail.session.compacted_message_count == 2
     finally:
         await runtime.close()
@@ -230,3 +236,27 @@ async def test_summary_failure_keeps_history_and_memory_state(tmp_path: Path) ->
         assert detail.session.context_tokens == 0
     finally:
         await runtime.close()
+
+
+def test_normalize_memory_summary_fills_missing_sections_in_order() -> None:
+    normalized = normalize_memory_summary(
+        "## 对话目标\n- 排查看板\n## 已做决定\n- 先查广州"
+    )
+
+    positions = [normalized.index(f"## {heading}") for heading in MEMORY_SUMMARY_HEADINGS]
+    assert positions == sorted(positions)
+    assert normalized.count("（无）") == 4
+
+
+def test_normalize_memory_summary_keeps_legacy_text_under_summary() -> None:
+    assert normalize_memory_summary("旧的一行摘要") == "## 摘要\n旧的一行摘要"
+
+
+def test_normalize_memory_summary_preserves_unknown_sections() -> None:
+    normalized = normalize_memory_summary(
+        "## 对话目标\n- 目标\n## 额外信息\n- 需要保留"
+    )
+
+    assert "## 其他" in normalized
+    assert "### 额外信息" in normalized
+    assert "需要保留" in normalized

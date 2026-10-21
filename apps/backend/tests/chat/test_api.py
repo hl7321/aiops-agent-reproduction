@@ -308,6 +308,59 @@ async def test_memory_http_contract_requires_json_content_type(
     assert rejected.json()["error"]["code"] == "VALIDATION_REQUEST_INVALID"
 
 
+async def test_rename_chat_session_persists_and_survives_first_message(
+    chat_database_url: str,
+) -> None:
+    async with client_for(chat_database_url) as client:
+        headers = await _auth(client, "rename@example.com")
+        created = await client.post("/chat/sessions", headers=headers)
+        session_id = created.json()["data"]["session"]["id"]
+
+        renamed = await client.patch(
+            f"/chat/sessions/{session_id}",
+            headers=headers,
+            json={"title": "  新的 会话 标题  "},
+        )
+        listed = await client.get("/chat/sessions", headers=headers)
+        appended = await client.post(
+            f"/chat/sessions/{session_id}/messages",
+            headers=headers,
+            json={"role": "user", "content": "首条消息不应覆盖手动标题"},
+        )
+
+    assert renamed.status_code == 200
+    assert renamed.json()["data"]["session"]["title"] == "新的 会话 标题"
+    assert listed.json()["data"]["sessions"][0]["title"] == "新的 会话 标题"
+    assert appended.json()["data"]["session"]["title"] == "新的 会话 标题"
+
+
+async def test_rename_chat_session_validates_title_and_owner(
+    chat_database_url: str,
+) -> None:
+    async with client_for(chat_database_url) as client:
+        owner = await _auth(client, "rename-owner@example.com")
+        other = await _auth(client, "rename-other@example.com")
+        created = await client.post("/chat/sessions", headers=owner)
+        session_id = created.json()["data"]["session"]["id"]
+
+        empty = await client.patch(
+            f"/chat/sessions/{session_id}", headers=owner, json={"title": "   "}
+        )
+        too_long = await client.patch(
+            f"/chat/sessions/{session_id}", headers=owner, json={"title": "x" * 129}
+        )
+        forbidden = await client.patch(
+            f"/chat/sessions/{session_id}", headers=other, json={"title": "越权标题"}
+        )
+        detail = await client.get(f"/chat/sessions/{session_id}", headers=owner)
+
+    assert empty.status_code == 422
+    assert too_long.status_code == 422
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "AUTH_FORBIDDEN"
+    assert detail.json()["data"]["session"]["title"] == "新会话"
+
+
 async def test_chat_api_fails_explicitly_without_model_capability(chat_database_url: str) -> None:
     await upgrade_database(chat_database_url)
     app = create_app(

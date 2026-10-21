@@ -40,6 +40,10 @@ export interface UpdateChatMemoryRequest {
   readonly memoryMode: ChatMemoryMode;
 }
 
+export interface UpdateChatSessionTitleRequest {
+  readonly title: string;
+}
+
 export interface ChatSessionListData {
   readonly sessions: readonly ChatSession[];
 }

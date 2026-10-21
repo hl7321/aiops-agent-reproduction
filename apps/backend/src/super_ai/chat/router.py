@@ -23,6 +23,7 @@ from super_ai.api_contracts import (
     FailureEnvelope,
     SuccessEnvelope,
     UpdateChatMemoryRequest,
+    UpdateChatSessionTitleRequest,
 )
 from super_ai.api_responses import success_response
 from super_ai.chat.dependencies import (
@@ -153,6 +154,25 @@ async def get_chat_session(
 ) -> JSONResponse:
     return _success(
         _detail(await memory.project(current_user.owner_user_id, id)), get_request_id(request)
+    )
+
+
+@router.patch(
+    "/{id}",
+    operation_id="renameChatSession",
+    response_model=SuccessEnvelope[ChatSessionDetailData],
+    responses=APPEND_RESPONSES,
+)
+async def rename_chat_session(
+    id: str,
+    body: UpdateChatSessionTitleRequest,
+    request: Request,
+    current_user: Annotated[CurrentUser, Depends(get_current_user)],
+    memory: Annotated[ChatMemoryService, Depends(get_chat_memory_service)],
+) -> JSONResponse:
+    return _success(
+        _detail(await memory.rename(current_user.owner_user_id, id, body.title)),
+        get_request_id(request),
     )
 
 

@@ -28,6 +28,56 @@ from super_ai.project_config import JsonValue
 logger = logging.getLogger(__name__)
 TokenEstimator = Callable[[Sequence[BaseMessage]], int]
 
+MEMORY_SUMMARY_HEADINGS = (
+    "对话目标",
+    "关键事实与标识",
+    "已做决定",
+    "工具与证据",
+    "未解决事项",
+    "风险与注意事项",
+)
+
+
+def normalize_memory_summary(raw: str) -> str:
+    """把模型摘要归一化为固定六段；旧摘要保持单一"摘要"兼容。"""
+    text = raw.strip()
+    if not text:
+        return text
+
+    sections: dict[str, list[str]] = {}
+    preamble: list[str] = []
+    current: str | None = None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            current = line[3:].strip()
+            sections.setdefault(current, [])
+        elif current is None:
+            preamble.append(line)
+        else:
+            sections[current].append(line)
+
+    if not any(heading in sections for heading in MEMORY_SUMMARY_HEADINGS):
+        return f"## 摘要\n{text}"
+
+    lines: list[str] = []
+    for heading in MEMORY_SUMMARY_HEADINGS:
+        lines.append(f"## {heading}")
+        content = "\n".join(sections.get(heading, [])).strip()
+        lines.append(content or "（无）")
+        lines.append("")
+
+    other_lines = [line for line in preamble if line.strip()]
+    for heading, content_lines in sections.items():
+        if heading in MEMORY_SUMMARY_HEADINGS:
+            continue
+        other_lines.append(f"### {heading}")
+        other_lines.append("\n".join(content_lines).strip() or "（无）")
+    if other_lines:
+        lines.append("## 其他")
+        lines.extend(other_lines)
+
+    return "\n".join(lines).strip()
+
 
 class ChatConfigurationSnapshotStore(Protocol):
     async def load_snapshot(self, owner_user_id: str) -> ChatAgentConfigurationSnapshot: ...
@@ -97,6 +147,20 @@ class ChatMemoryService:
         async with transaction_scope(self._sessions) as session:
             created = await SqliteChatRepository(session).create(owner_user_id)
         return await self.project(owner_user_id, created.session.id)
+
+    async def rename(
+        self, owner_user_id: str, session_id: str, title: str
+    ) -> ChatMemoryProjection:
+        normalized = " ".join(title.split())
+        if not normalized or len(normalized) > 128:
+            raise AppError("VALIDATION_REQUEST_INVALID")
+        async with transaction_scope(self._sessions) as session:
+            updated = await SqliteChatRepository(session).update_title(
+                owner_user_id, session_id, normalized
+            )
+            if updated is None:
+                raise AppError("AUTH_FORBIDDEN")
+        return await self.project(owner_user_id, session_id)
 
     async def append(
         self,
@@ -257,8 +321,8 @@ class ChatMemoryService:
         if target is None:
             return detail
         transcript = tuple(f"{item.role}: {item.content}" for item in target.messages)
-        summary = await self._summarizer.summarize(
-            detail.session.memory_summary, transcript
+        summary = normalize_memory_summary(
+            await self._summarizer.summarize(detail.session.memory_summary, transcript)
         )
         if not summary.strip():
             raise RuntimeError("摘要模型未返回内容")

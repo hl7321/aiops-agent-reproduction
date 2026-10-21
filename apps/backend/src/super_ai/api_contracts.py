@@ -537,6 +537,17 @@ class UpdateChatMemoryRequest(ContractModel):
     memory_mode: ChatMemoryMode = Field(alias="memoryMode")
 
 
+class UpdateChatSessionTitleRequest(ContractModel):
+    title: str = Field(min_length=1, max_length=128)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> object:
+        if isinstance(value, str):
+            return " ".join(value.split())
+        return value
+
+
 class ChatDeleteData(ContractModel):
     deleted: Literal[True] = True
     session_id: str = Field(alias="sessionId")

@@ -116,12 +116,13 @@ describe("聊天会话共享合同", () => {
     expect(audit).not.toHaveProperty("parentCallId");
   });
 
-  it("登记十种受保护聊天操作和记忆错误", () => {
+  it("登记十一种受保护聊天操作和记忆错误", () => {
     expect(CHAT_OPENAPI_OPERATIONS).toEqual(manifest.openapi.chatOperations);
     expect(CHAT_OPENAPI_OPERATIONS.map((operation) => operation.operationId)).toEqual([
       "createChatSession",
       "listChatSessions",
       "getChatSession",
+      "renameChatSession",
       "appendChatMessage",
       "clearChatMessages",
       "deleteChatSession",

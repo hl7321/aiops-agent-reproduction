@@ -155,7 +155,7 @@ class SqliteChatRepository:
             )
         )
         values: dict[str, object] = {"updated_at": now}
-        if role == "user" and not had_user:
+        if role == "user" and not had_user and session.title == "新会话":
             values["title"] = " ".join(content.split())[:48]
         await self._session.execute(
             update(ChatSessionModel)
@@ -209,6 +209,23 @@ class SqliteChatRepository:
                 ChatSessionModel.id == session_id,
             )
             .values(memory_mode=memory_mode)
+            .returning(ChatSessionModel.id)
+        )
+        if updated is None:
+            return None
+        await self._session.flush()
+        return await self.get(owner_user_id, session_id)
+
+    async def update_title(
+        self, owner_user_id: str, session_id: str, title: str
+    ) -> ChatSessionDetailRecord | None:
+        updated = await self._session.scalar(
+            update(ChatSessionModel)
+            .where(
+                ChatSessionModel.owner_user_id == owner_user_id,
+                ChatSessionModel.id == session_id,
+            )
+            .values(title=title, updated_at=utc_now())
             .returning(ChatSessionModel.id)
         )
         if updated is None:

@@ -58,6 +58,9 @@ function fakeClient(): ChatClient {
     updateMemory: vi.fn(async (_id, body) => result({
       ...DETAIL, session: { ...SESSION, memoryMode: body.memoryMode },
     })),
+    updateSessionTitle: vi.fn(async (_id, body) => result({
+      ...DETAIL, session: { ...SESSION, title: body.title },
+    })),
     compactMemory: vi.fn(async () => result({
       ...DETAIL,
       session: {
@@ -153,6 +156,20 @@ describe("chat store", () => {
     await store.compactMemory();
     expect(store.selectedDetail?.session.memorySummary).toBe("摘要");
     expect(store.sessions[0]?.compactedMessageCount).toBe(2);
+  });
+
+  it("重命名后同时更新详情与会话列表", async () => {
+    const client = fakeClient();
+    const store = createChatStore({ client })();
+    await store.selectSession(SESSION.id);
+
+    await store.renameSession(SESSION.id, "新的会话标题");
+
+    expect(client.updateSessionTitle).toHaveBeenCalledWith(SESSION.id, {
+      title: "新的会话标题",
+    });
+    expect(store.selectedDetail?.session.title).toBe("新的会话标题");
+    expect(store.sessions[0]?.title).toBe("新的会话标题");
   });
 
   it("记忆写操作失败后重新读取最后成功的服务端 DTO", async () => {

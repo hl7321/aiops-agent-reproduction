@@ -121,6 +121,15 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
       }
     }
 
+    async function renameSession(id: string, title: string): Promise<void> {
+      try {
+        applyDetail((await dependencies.client.updateSessionTitle(id, { title })).data);
+      } catch (error: unknown) {
+        await refreshDetail(id);
+        throw error;
+      }
+    }
+
     async function compactMemory(): Promise<void> {
       const id = requireSelectedId();
       try {
@@ -232,7 +241,7 @@ export function createChatStore(dependencies: ChatStoreDependencies) {
       sessions, selectedDetail, toolAudits, loading, errorMessage,
       liveContent, liveReasoning, liveToolCalls, liveReferences, liveStatus, liveErrorMessage,
       initialize, ensureActiveSession, createSession, selectSession, appendMessage, streamMessage,
-      clearMessages, updateMemoryMode, compactMemory, deleteSession, reset,
+      clearMessages, updateMemoryMode, renameSession, compactMemory, deleteSession, reset,
     };
   });
 }

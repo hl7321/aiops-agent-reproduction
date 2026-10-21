@@ -38,6 +38,9 @@ class ChatRepository(Protocol):
     async def update_memory_mode(
         self, owner_user_id: str, session_id: str, memory_mode: ChatMemoryMode
     ) -> ChatSessionDetailRecord | None: ...
+    async def update_title(
+        self, owner_user_id: str, session_id: str, title: str
+    ) -> ChatSessionDetailRecord | None: ...
     async def update_context_tokens(
         self, owner_user_id: str, session_id: str, context_tokens: int
     ) -> bool: ...

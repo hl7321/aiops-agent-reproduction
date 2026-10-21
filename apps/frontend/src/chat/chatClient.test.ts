@@ -41,6 +41,7 @@ describe("chatClient", () => {
     await client.appendMessage("s/1", { role: "user", content: "你好" });
     await client.clearMessages("s/1");
     await client.updateMemory("s/1", { memoryMode: "manual" });
+    await client.updateSessionTitle("s/1", { title: "新标题" });
     await client.compactMemory("s/1");
     await client.deleteSession("s/1");
 
@@ -51,6 +52,7 @@ describe("chatClient", () => {
       { url: "/chat/sessions/s%2F1/messages", method: "POST", body: '{"role":"user","content":"你好"}' },
       { url: "/chat/sessions/s%2F1/messages:clear", method: "POST" },
       { url: "/chat/sessions/s%2F1/memory", method: "PUT", body: '{"memoryMode":"manual"}' },
+      { url: "/chat/sessions/s%2F1", method: "PATCH", body: '{"title":"新标题"}' },
       { url: "/chat/sessions/s%2F1/memory:compact", method: "POST" },
       { url: "/chat/sessions/s%2F1", method: "DELETE" },
     ]);
