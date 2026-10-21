@@ -2,7 +2,7 @@
 
 ## 进行中的变更
 
-- [add-chat-session-rename-and-structured-summary](./active/add-chat-session-rename-and-structured-summary/)
+- 无
 
 ## 已归档变更
 
@@ -44,6 +44,7 @@
 - [2026-10-18-fix-aiops-deterministic-log-window](./archive/2026-10-18-fix-aiops-deterministic-log-window/)
 - [2026-10-18-fix-aiops-report-claim-contract](./archive/2026-10-18-fix-aiops-report-claim-contract/)
 - [2026-10-18-slim-aiops-execution-context](./archive/2026-10-18-slim-aiops-execution-context/)
+- [2026-10-21-add-chat-session-rename-and-structured-summary](./archive/2026-10-21-add-chat-session-rename-and-structured-summary/)
 - [2026-10-21-add-chat-summary-panel](./archive/2026-10-21-add-chat-summary-panel/)
 - [2026-10-21-fix-chat-memory-controls](./archive/2026-10-21-fix-chat-memory-controls/)
 
