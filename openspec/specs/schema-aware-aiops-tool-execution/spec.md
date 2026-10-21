@@ -143,7 +143,7 @@ knowledge retrieval 保持 owner scope；其他只读工具只有真实发现时
 
 当前运行时 SHALL 继续从 ignored 本地 JSON 深合并后的 `clsLogUpload.region` 与 `clsLogUpload.topicId` 取得可信默认值，不新增远端日志源发现或路由。Region 与 TopicId MUST 由服务端无条件注入，模型和客户端 MUST NOT 覆盖，且 MUST NOT 出现在模型可见的参数说明中。
 
-SearchLog 的 `From`/`To` SHALL 由服务端依据告警时间与 `clsLogUpload.windowBeforeMinutes`（默认 15）和 `windowAfterMinutes`（默认 0）确定性计算：窗口起点为最早告警 `startsAt` 减去 before，终点为最晚告警 `startsAt` 加上 after。`From`/`To` MUST NOT 由模型生成，也 MUST NOT 出现在模型可见的参数说明中；告警缺少可解析的 `startsAt` 时 MUST 在调用 SearchLog 前以明确错误失败。
+SearchLog 的 `From`/`To` SHALL 由服务端依据告警时间与 `clsLogUpload.windowBeforeMinutes`（默认 15）和 `windowAfterMinutes`（默认 0）确定性计算：本轮有告警时，窗口起点为最早 `startsAt` 减去 before，终点为最晚 `startsAt` 加上 after；本轮没有任何告警（手动 query 诊断）时，以服务端当前时间 `now` 为锚点，窗口为 `[now − before, now + after]`。`From`/`To` MUST NOT 由模型生成，也 MUST NOT 出现在模型可见的参数说明中；本轮存在告警但任一告警缺少可解析 `startsAt` 时 MUST 在调用 SearchLog 前以明确错误失败。
 
 依赖前面步骤真实产出的字段 SHALL 由执行者在执行该步骤时提供，MUST NOT 在计划阶段预先写死。执行者 MUST 按字段性质区分来源：
 
@@ -177,9 +177,14 @@ SearchLog 的 `From`/`To` SHALL 由服务端依据告警时间与 `clsLogUpload.
 - **WHEN** 本轮包含多条告警且 `startsAt` 分别为 T1、T2（T1 < T2），窗口配置为 before=15、after=0
 - **THEN** 实际窗口为 `[T1−15 分钟, T2]`，不按单条告警分别猜测
 
+#### Scenario: 仅 query 诊断使用当前时间锚点
+
+- **WHEN** 本轮 `alerts` 为空、服务端当前时间为 T，窗口配置为 before=15、after=0
+- **THEN** 实际调用 SearchLog 的 `From` 为 T−15 分钟、`To` 为 T，且不出现"没有可用告警"错误
+
 #### Scenario: 告警时间不可解析
 
-- **WHEN** 本轮告警缺少 `startsAt` 或该值不是可解析的时间
+- **WHEN** 本轮存在告警，但任一告警缺少 `startsAt` 或该值不是可解析的时间
 - **THEN** 诊断在调用 SearchLog 前以明确错误失败，不退回模型自算时间窗
 
 #### Scenario: 跨步骤参数由执行者填写
@@ -243,7 +248,9 @@ SearchLog 的 `From`/`To` SHALL 由服务端依据告警时间与 `clsLogUpload.
 
 ### Requirement: Executor 只接收执行所需的最小上下文
 
-Executor 的填参调用 SHALL 只包含：当前工具说明、整份计划（工具与用途）、最小告警摘要、当前步骤真正需要的前序产出、上一次错误。MUST NOT 包含完整告警原文中的 `rawContext`/`fingerprint`/`receivers` 等诊断无关字段，MUST NOT 包含与当前步骤无关的全部证据。Planner 仍 SHALL 获得完整告警与 SOP；Report 仍 SHALL 获得全部已持久化证据。
+Executor 的填参调用 SHALL 只包含：当前工具说明、整份计划（工具与用途）、最小告警摘要、当前步骤真正需要的前序产出、上一次错误。MUST NOT 包含完整告警原文中的 `rawContext`/`fingerprint`/`receivers` 等诊断无关字段，MUST NOT 包含与当前步骤无关的全部证据。Planner 仍 SHALL 获得完整告警、SOP 与规范化后的可选用户 query；Report 仍 SHALL 获得全部已持久化证据。
+
+Planner 的上下文 MUST 以独立标签区分 `用户问题`、告警、SOP 与工具目录，MUST NOT 只在 SOP 或告警中偶然出现 query 信息时才让 Planner 获知用户目标。Executor MUST NOT 因本要求获得整段对话历史或全部证据；Planner 的步骤用途 SHALL 保留执行该步骤所需的 query 关键目标，Executor 通过最小计划与当前步骤所需前序产出完成执行。
 
 #### Scenario: executor 上下文不含完整告警原文
 
@@ -263,7 +270,17 @@ Executor 的填参调用 SHALL 只包含：当前工具说明、整份计划（�
 #### Scenario: planner 上下文保持完整
 
 - **WHEN** planner 排计划
-- **THEN** 它仍能看到完整告警、SOP 与完整工具目录
+- **THEN** 它仍能看到完整告警、SOP、规范化后的可选用户 query 与完整工具目录
+
+#### Scenario: 纯 query 在 planner 上下文中独立可见
+
+- **WHEN** 本轮 query 非空且 alerts 为空，知识检索返回与 query 无关或没有任何 SOP
+- **THEN** planner 提示词仍包含明确的 `用户问题` 与原始 query，不把空告警和空 SOP 当成没有诊断目标
+
+#### Scenario: executor 不继承完整对话上下文
+
+- **WHEN** planner 已看到 query、告警、SOP 与工具目录并生成计划
+- **THEN** executor 只收到该计划、当前工具说明、最小告警摘要与当前步骤必要的前序产出，不收到完整 SOP 全文、全部证据或对话历史
 
 ### Requirement: 模型可见工具说明使用标准 JSON 并保留官方约束
 

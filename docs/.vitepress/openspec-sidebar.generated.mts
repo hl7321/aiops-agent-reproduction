@@ -177,6 +177,14 @@ export const openspecSidebar = [
         "link": "/changes/archive/2026-10-21-add-chat-summary-panel/"
       },
       {
+        "text": "2026-10-21-fix-aiops-planner-query-context",
+        "link": "/changes/archive/2026-10-21-fix-aiops-planner-query-context/"
+      },
+      {
+        "text": "2026-10-21-fix-aiops-query-only-log-window",
+        "link": "/changes/archive/2026-10-21-fix-aiops-query-only-log-window/"
+      },
+      {
         "text": "2026-10-21-fix-chat-memory-controls",
         "link": "/changes/archive/2026-10-21-fix-chat-memory-controls/"
       }

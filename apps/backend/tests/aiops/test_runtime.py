@@ -223,6 +223,75 @@ class FakeModel:
         raise RuntimeError("模型报告失败以验证诚实 fallback")
 
 
+class QueryOnlyModel(FakeModel):
+    """纯 query 诊断的 planner：上下文里没有告警名，但仍应正常生成日志检索计划。"""
+
+    def __init__(self) -> None:
+        self.plan_context = ""
+
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        self.plan_context = context
+        assert "用户问题：order-service 的 OrderDatabasePoolExhausted" in context
+        assert "告警：[]" in context
+        assert not validation_errors
+        assert tuple(item.name for item in tool_catalog) == (
+            "knowledge_retrieval",
+            "TextToSearchLogQuery",
+            "SearchLog",
+        )
+        return PlanDraft(
+            steps=[
+                _query_builder_step("生成 order-service 连接池耗尽日志查询"),
+                _search_step("检索 order-service 的 OrderDatabasePoolExhausted 日志"),
+            ]
+        )
+
+    async def fill_step_arguments(
+        self,
+        *,
+        context: str,
+        tool: ToolCapabilityDescriptor,
+        plan: Sequence[PlanStep],
+        step: PlanStep,
+        previous_error: str | None = None,
+    ) -> StepArgumentsDraft:
+        assert "用户问题：" not in context
+        return await super().fill_step_arguments(
+            context=context,
+            tool=tool,
+            plan=plan,
+            step=step,
+            previous_error=previous_error,
+        )
+
+    async def report(self, *, context: str) -> ReportDraft:
+        assert "用户问题：" not in context
+        return await super().report(context=context)
+
+
+class QueryAndAlertModel(QueryOnlyModel):
+    """query 与告警同时存在时，两者都必须进入 Planner。"""
+
+    async def plan(
+        self,
+        *,
+        context: str,
+        tool_catalog: Sequence[ToolCapabilityDescriptor],
+        validation_errors: Sequence[str] = (),
+    ) -> PlanDraft:
+        self.plan_context = context
+        assert "用户问题：排查 payment-service 的 Redis 超时" in context
+        assert "HighError" in context
+        assert not validation_errors
+        return PlanDraft(steps=[_query_builder_step(), _search_step()])
+
+
 class EmptyResolver:
     async def discover(
         self, owner_user_id: str, *, builtin_tool_names: frozenset[str]
@@ -482,6 +551,148 @@ async def test_fallback_without_log_hits_keeps_insufficient_evidence_code(
         assert [item.kind for item in evidence] == ["query_artifact"]
         assert report is not None and report.generation_mode == "fallback"
         assert report.trust_state == "insufficient_evidence"
+    finally:
+        await runtime.close()
+
+
+async def test_query_only_diagnosis_uses_runtime_now_for_search_log_window(
+    tmp_path: Path,
+) -> None:
+    """alerts=[] 时 SearchLog 仍执行，From/To 由 runtime 当前时间确定性生成。"""
+    url = f"sqlite+aiosqlite:///{tmp_path / 'query-only.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            diagnostics = SqliteDiagnosticRepository(session)
+            task = await diagnostics.create_task(
+                "owner",
+                "order-service 的 OrderDatabasePoolExhausted",
+                [],
+            )
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner",
+                NewBackgroundJob(
+                    kind="aiops_diagnosis",
+                    resource_type="diagnostic_task",
+                    resource_id=task.id,
+                    payload={"taskId": task.id},
+                ),
+            )
+        order: list[str] = []
+        resolver = FakeResolver(order)
+        model = QueryOnlyModel()
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge(order),
+            resolver,
+            model,
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+
+        async with transaction_scope(runtime.session_factory) as session:
+            repository = SqliteDiagnosticRepository(session)
+            saved = await repository.get_task("owner", task.id)
+            steps = await repository.list_steps("owner", task.id)
+
+        search_steps = [step for step in steps if step.tool_name == "SearchLog"]
+        assert len(search_steps) == 1
+        assert search_steps[0].status == "succeeded"
+        assert search_steps[0].arguments["From"] == 1_787_479_200_000
+        assert search_steps[0].arguments["To"] == 1_787_480_100_000
+        assert search_steps[0].error_message is None
+        assert "没有可用告警" not in str(steps)
+        assert saved is not None
+        assert [step.purpose for step in saved.current_plan] == [
+            "生成 order-service 连接池耗尽日志查询",
+            "检索 order-service 的 OrderDatabasePoolExhausted 日志",
+        ]
+        # 已越过 SearchLog 进入报告阶段；报告模型失败是测试替身的既定行为。
+        assert saved.failure_code == "SYSTEM_AIOPS_REPORT_GENERATION_FAILED"
+    finally:
+        await runtime.close()
+
+
+async def test_query_and_alert_are_both_visible_to_planner(tmp_path: Path) -> None:
+    """query 定义重点，告警仍作为上下文与时间锚点同时进入 Planner。"""
+    url = f"sqlite+aiosqlite:///{tmp_path / 'query-and-alert.sqlite3'}"
+    await upgrade_database(url)
+    runtime = PersistenceRuntime.start(DatabaseSettings(url=url))
+    try:
+        async with transaction_scope(runtime.session_factory) as session:
+            now = utc_now()
+            session.add(
+                UserModel(
+                    id="owner",
+                    email="owner@example.com",
+                    password_hash="hash",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            diagnostics = SqliteDiagnosticRepository(session)
+            task = await diagnostics.create_task(
+                "owner",
+                "排查 payment-service 的 Redis 超时",
+                [TEST_ALERT],
+            )
+            job = await SqliteBackgroundJobStore(session).enqueue(
+                "owner",
+                NewBackgroundJob(
+                    kind="aiops_diagnosis",
+                    resource_type="diagnostic_task",
+                    resource_id=task.id,
+                    payload={"taskId": task.id},
+                ),
+            )
+        order: list[str] = []
+        resolver = FakeResolver(order)
+        model = QueryAndAlertModel()
+        diagnosis = DiagnosticRuntime(
+            SqliteDiagnosticStore(runtime.session_factory),
+            FakeKnowledge(order),
+            resolver,
+            model,
+            AgentToolAuditService(
+                SqliteAgentToolCallAuditStore(runtime.session_factory), now=utc_now
+            ),
+            search_log_defaults=SearchLogQueryDefaults("ap-guangzhou", "topic-real"),
+            now_ms=lambda: 1_787_480_100_000,
+        )
+
+        async def not_cancelled() -> bool:
+            return False
+
+        await diagnosis.run(BackgroundJobContext(job.id, "owner", not_cancelled), task.id)
+
+        async with transaction_scope(runtime.session_factory) as session:
+            repository = SqliteDiagnosticRepository(session)
+            steps = await repository.list_steps("owner", task.id)
+
+        assert "用户问题：排查 payment-service 的 Redis 超时" in model.plan_context
+        assert "HighError" in model.plan_context
+        search_steps = [step for step in steps if step.tool_name == "SearchLog"]
+        assert search_steps[0].arguments["From"] == 1_787_479_200_000
+        assert search_steps[0].arguments["To"] == 1_787_480_100_000
     finally:
         await runtime.close()
 

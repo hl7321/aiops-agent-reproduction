@@ -46,6 +46,8 @@
 - [2026-10-18-slim-aiops-execution-context](./archive/2026-10-18-slim-aiops-execution-context/)
 - [2026-10-21-add-chat-session-rename-and-structured-summary](./archive/2026-10-21-add-chat-session-rename-and-structured-summary/)
 - [2026-10-21-add-chat-summary-panel](./archive/2026-10-21-add-chat-summary-panel/)
+- [2026-10-21-fix-aiops-planner-query-context](./archive/2026-10-21-fix-aiops-planner-query-context/)
+- [2026-10-21-fix-aiops-query-only-log-window](./archive/2026-10-21-fix-aiops-query-only-log-window/)
 - [2026-10-21-fix-chat-memory-controls](./archive/2026-10-21-fix-chat-memory-controls/)
 
 ## 主规格

@@ -1,6 +1,6 @@
 import json
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -9,6 +9,7 @@ from super_ai.aiops.evidence import alert_evidence, normalize_tool_evidence
 from super_ai.aiops.models import DiagnosticEvidenceRecord
 from super_ai.aiops.planning import (
     CLAIM_KEY_MAX_LENGTH,
+    PLANNER_SYSTEM_PROMPT,
     REPORT_SYSTEM_PROMPT,
     PlanDraft,
     PlanStepDraft,
@@ -395,7 +396,9 @@ def test_search_log_window_uses_alert_time_and_config() -> None:
         "ap-guangzhou", "topic-real", window_before_minutes=15, window_after_minutes=0
     )
     window_from, window_to = search_log_window(
-        [{"startsAt": "2026-08-23T10:15:00Z"}], defaults
+        [{"startsAt": "2026-08-23T10:15:00Z"}],
+        defaults,
+        now=datetime(2026, 10, 18, tzinfo=timezone.utc),
     )
 
     assert window_from == 1_787_479_200_000
@@ -410,17 +413,37 @@ def test_search_log_window_covers_all_alerts() -> None:
             {"startsAt": "2026-08-23T10:00:00Z"},
         ],
         defaults,
+        now=datetime(2026, 10, 18, tzinfo=timezone.utc),
     )
 
     assert window_from == 1_787_478_300_000  # 09:45:00Z
     assert window_to == 1_787_480_100_000  # 10:15:00Z
 
 
+def test_search_log_window_uses_now_when_query_only_diagnosis_has_no_alerts() -> None:
+    """纯 query 诊断没有告警时，以服务端当前时间作为 deterministic 锚点。"""
+    now = datetime(2026, 10, 18, 3, 34, 11, 967_000, tzinfo=timezone.utc)
+    defaults = SearchLogQueryDefaults(
+        "ap-guangzhou", "topic-real", window_before_minutes=15, window_after_minutes=0
+    )
+
+    window_from, window_to = search_log_window([], defaults, now=now)
+
+    assert window_from == int(
+        (now - timedelta(minutes=15)).timestamp() * 1000
+    )  # 03:19:11.967Z
+    assert window_to == int(now.timestamp() * 1000)
+
+
 def test_search_log_window_requires_parseable_alert_time() -> None:
     defaults = SearchLogQueryDefaults("ap-guangzhou", "topic-real")
     for alert in ({}, {"startsAt": "not-a-time"}, {"startsAt": "2026-08-23T10:15:00"}):
         with pytest.raises(ValueError):
-            search_log_window([alert], defaults)
+            search_log_window(
+                [alert],
+                defaults,
+                now=datetime(2026, 10, 18, tzinfo=timezone.utc),
+            )
 
 
 def test_executor_context_uses_minimal_alert_digest() -> None:
@@ -497,11 +520,30 @@ def test_planner_context_keeps_full_alert_and_evidence() -> None:
         created_at=now,
     )
 
-    context = _model_context([alert], [knowledge])
+    context = _model_context(
+        [alert],
+        [knowledge],
+        query="排查 payment-service 的 Redis 超时",
+    )
 
+    assert "用户问题：排查 payment-service 的 Redis 超时" in context
     assert "rawContext" in context
     assert "SOP 状态：已获得 SOP 引用" in context
     assert "evidenceId=evidence-sop" in context
+
+
+def test_planner_context_marks_query_absent_without_inventing_one() -> None:
+    context = _model_context([{"alertName": "HighError"}], [])
+
+    assert "用户问题：未提供" in context
+    assert "告警：[{'alertName': 'HighError'}]" in context
+
+
+def test_planner_prompt_prioritizes_query_over_sop() -> None:
+    assert "用户问题（query）" in PLANNER_SYSTEM_PROMPT
+    assert "query 存在时，query 定义诊断目标" in PLANNER_SYSTEM_PROMPT
+    assert "SOP 只能提供辅助经验" in PLANNER_SYSTEM_PROMPT
+    assert "不得用 SOP 替代 query" in PLANNER_SYSTEM_PROMPT
 
 
 def test_executor_context_caps_prior_output() -> None:

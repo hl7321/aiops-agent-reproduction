@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from typing import Any, Protocol, TypedDict, cast
 from uuid import uuid4
 
@@ -280,7 +281,7 @@ class DiagnosticRuntime:
                 evidence = await self._store.call("list_evidence", owner, task_id)
                 plan = await create_validated_plan(
                     self._model,
-                    context=_model_context(task.alerts, evidence),
+                    context=_model_context(task.alerts, evidence, query=task.query),
                     tool_catalog=(
                         knowledge_descriptor,
                         *aiops_registry.catalog,
@@ -411,7 +412,16 @@ class DiagnosticRuntime:
                     elif is_search_log_tool(plan_step.tool_name):
                         if self._search_log_defaults is None:
                             raise ToolConfigurationError("CLS 本地权威配置缺失")
-                        window = search_log_window(task.alerts, self._search_log_defaults)
+                        # 纯 query 诊断没有告警时，用本轮 runtime 的可注入时钟作为窗口锚点；
+                        # 有告警时该值不参与计算，窗口仍严格由告警 startsAt 决定。
+                        window = search_log_window(
+                            task.alerts,
+                            self._search_log_defaults,
+                            now=datetime.fromtimestamp(
+                                self._now_ms() / 1000,
+                                tz=timezone.utc,
+                            ),
+                        )
                         proposed = dict(candidate_arguments)
                         query_artifact = _latest_query_artifact(evidence)
                         if search_query_override is not None:
@@ -968,6 +978,7 @@ def _model_context(
     alerts: Sequence[dict[str, JsonValue]],
     evidence: Sequence[DiagnosticEvidenceRecord],
     *,
+    query: str | None = None,
     plan: Sequence[PlanStep] = (),
     steps: Sequence[DiagnosticStepRecord] = (),
 ) -> str:
@@ -987,8 +998,9 @@ def _model_context(
     execution_result = (
         build_execution_result(plan, steps, evidence) if steps else "（本轮无步骤记录）"
     )
+    normalized_query = query.strip() if query is not None and query.strip() else "未提供"
     return (
-        f"告警：{list(alerts)}\nSOP 状态：{sop_state}\n"
+        f"用户问题：{normalized_query}\n告警：{list(alerts)}\nSOP 状态：{sop_state}\n"
         f"最终计划：{list(plan)}\n步骤摘要：{safe_steps}"
         f"\n执行结果：{execution_result}"
         f"\n已持久化证据：\n{summarize_evidence(evidence)}"
